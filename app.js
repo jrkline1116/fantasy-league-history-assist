@@ -415,12 +415,13 @@
         <div class="kpi"><div class="v num">${champs.size}</div><div class="l">Different champions</div></div>
       </div>
       <h2>Trophy room</h2>
+      <p class="sub" style="margin-top:-4px">Tap a manager to see that team's roster, draft and moves. Tap a year for the whole season.</p>
       <div class="scroll"><table>
         <thead><tr><th class="l">Year</th><th class="l">Champion</th><th class="l">Runner-up</th><th class="l">Best regular season</th><th class="l">Most points</th></tr></thead>
         <tbody>${[...st.seasons].reverse().map((s) => {
           const t = (k) => s.rows.find((r) => r.key === k);
           const reg1 = s.rows.find((r) => r.regRank === 1); const pts = top(s, (r) => r.pf);
-          const cellM = (r, extra = "") => r ? `<td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}${extra}</span></td>` : `<td class="l muted">—</td>`;
+          const cellM = (r, extra = "") => r ? `<td class="l mgr" data-act="teamSeason" data-year="${s.year}" data-k="${esc(r.key)}">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}${extra}</span></td>` : `<td class="l muted">—</td>`;
           return `<tr class="clickable" data-act="gotoSeason" data-year="${s.year}"><td class="l"><b>${s.year}</b></td>
             ${s.complete ? cellM(t(s.champion), "").replace('class="l mgr"', 'class="l mgr trophy"') : `<td class="l muted">In progress</td>`}
             ${s.complete ? cellM(t(s.runnerUp)) : `<td class="l muted">—</td>`}
@@ -542,7 +543,7 @@
       <p class="sub">Team names: ${m.teamNames.map(esc).join(" · ")}</p>
 
       <div class="kpis">
-        <div class="kpi ${m.titles ? "gold" : ""}"><div class="v num">${m.titles}</div><div class="l">Championship${m.titles === 1 ? "" : "s"}${m.titles ? ` (${m.titleYears.join(", ")})` : ""}</div></div>
+        <div class="kpi ${m.titles ? "gold" : ""}"><div class="v num">${m.titles}</div><div class="l">Championship${m.titles === 1 ? "" : "s"}${m.titles ? ` (${m.titleYears.map((y) => `<button class="linkbtn" data-act="teamSeason" data-year="${y}" data-k="${esc(m.key)}">${y}</button>`).join(", ")})` : ""}</div></div>
         <div class="kpi"><div class="v num">${rec(m.w, m.l, m.t)}</div><div class="l">All-time record · ${pct(m.winPct)}</div></div>
         <div class="kpi"><div class="v num">${Math.round(m.pf).toLocaleString()}</div><div class="l">Points for · ${f1(m.pfPerGame)} / game</div></div>
         <div class="kpi"><div class="v num">${Math.round(m.pa).toLocaleString()}</div><div class="l">Points against · ${f1(m.paPerGame)} / game</div></div>
@@ -573,10 +574,10 @@
       <h2>Season by season</h2>
       <div class="scroll"><table>
         <thead><tr><th class="l">Year</th><th class="l">Team</th><th>Finish</th><th>Reg. season</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>High</th><th>Low</th><th class="l">Result</th></tr></thead>
-        <tbody>${m.lines.map((l) => `<tr class="clickable" data-act="gotoSeason" data-year="${l.year}"><td class="l"><b>${l.year}</b></td><td class="l">${esc(l.teamName)}</td>
+        <tbody>${m.lines.map((l) => `<tr class="clickable" data-act="teamSeason" data-year="${l.year}" data-k="${esc(m.key)}"><td class="l"><b>${l.year}</b></td><td class="l">${esc(l.teamName)}</td>
           <td class="num">${l.complete ? `${ord(l.finalRank)} <span class="muted">of ${l.teamCount}</span>` : "—"}</td><td class="num">${ord(l.regRank)}</td><td class="num">${rec(l.w, l.l, l.t)}</td>
           <td class="num">${tot(l.pf, l.g)}</td><td class="num">${tot(l.pa, l.g)}</td><td class="num">${f1(l.high)}</td><td class="num">${f1(l.low)}</td><td class="l">${result(l)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">W-L, PF and PA are regular season. High and low include playoff games. Tap a year to open that season.</p>
+      <p class="sub" style="margin-top:8px">W-L, PF and PA are regular season. High and low include playoff games. Tap a year for that team's roster, draft and moves.</p>
 
       <h2>Against every opponent</h2>
       <p class="sub">${S.prefs.h2hPlayoffs ? "Regular season and playoff games." : "Regular season games only."} Tap a row for every game.</p>
@@ -671,9 +672,9 @@
       <h2>${s.complete ? "Final standings" : "Standings so far"}</h2>
       <div class="scroll"><table>
         <thead><tr><th>${s.complete ? "Final" : "Now"}</th><th class="l">Manager</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>Reg. season</th><th class="l">Result</th></tr></thead>
-        <tbody>${s.rows.map((r) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(r.key)}"><td class="num rank1">${s.complete ? ord(r.finalRank) : ord(r.regRank)}</td><td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}</span></td>
+        <tbody>${s.rows.map((r) => `<tr class="clickable" data-act="teamSeason" data-year="${s.year}" data-k="${esc(r.key)}"><td class="num rank1">${s.complete ? ord(r.finalRank) : ord(r.regRank)}</td><td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}</span></td>
           <td class="num">${rec(r.w, r.l, r.t)}</td><td class="num">${tot(r.pf, r.g)}</td><td class="num">${tot(r.pa, r.g)}</td><td class="num">${ord(r.regRank)}</td><td class="l">${result(r)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">Records and points are regular season. Tap a manager to open their team page. ${S.league.seasons.find((x) => x.year === s.year)?.medianScoring ? "This league also plays the weekly median; those extra wins count toward seeding but aren't head-to-head games." : ""}</p>
+      <p class="sub" style="margin-top:8px">Records and points are regular season. Tap a team for its roster, draft and moves.${S.league.seasons.find((x) => x.year === s.year)?.rost ? ` <a href="#rosters" data-act="jumpRosters">Jump to every team's final roster</a>.` : ""} ${S.league.seasons.find((x) => x.year === s.year)?.medianScoring ? "This league also plays the weekly median; those extra wins count toward seeding but aren't head-to-head games." : ""}</p>
 
       <h2>${s.year} records</h2>
       <div class="cards">${gc("Highest score", R.high, "gold")}${gc("Lowest score", R.low)}${mc("Biggest blowout", R.blowout)}${mc("Closest game", R.closest)}</div>
@@ -949,34 +950,68 @@
       </div>` : ""}`;
   }
 
-  /* ----- final rosters (Seasons tab) ----- */
-  function rosterSection(src, st) {
-    if (!src.rost || !Object.keys(src.rost).length) return "";
-    // how each player got there: the last move that brought him to this team, else the draft
+  /* ----- final rosters (Seasons tab) and one team's season ----- */
+  // how each player got there: the last move that brought him to this team, else the draft
+  function howMap(src) {
     const how = {};
     for (const p of src.draft?.picks || []) how[`${p.k}|${p.p}`] = p.kp ? "K" : "D";
     for (const t of src.tx || []) {
       if (t.t === "trade") { for (const x of t.sides) for (const p of x.get) how[`${x.k}|${p}`] = "T"; }
       else for (const p of t.add) how[`${t.k}|${p}`] = t.t === "waiver" ? "W" : "FA";
     }
+    return how;
+  }
+  const HOW_KEY = "How they got him: <b>D</b> drafted · <b>K</b> keeper · <b>T</b> trade · <b>W</b> waivers · <b>FA</b> free agent.";
+  const SLOT_RANK = { s: 0, b: 1, t: 2, r: 3 };
+  function rosterList(src, raw, how) {
     const anyHow = Object.keys(how).length > 0;
-    const slotRank = { s: 0, b: 1, t: 2, r: 3 };
+    const list = [...src.rost[raw]].sort((a, b) => SLOT_RANK[a.s] - SLOT_RANK[b.s] || (POS_ORDER[pinfo(src, a.p)[1]] || 5) - (POS_ORDER[pinfo(src, b.p)[1]] || 5));
+    const tally = {}; for (const x of list) { const h = how[`${raw}|${x.p}`]; if (h) tally[h] = (tally[h] || 0) + 1; }
+    return `<ul class="plist">${list.map((x) => { const [n, pos] = pinfo(src, x.p), h = how[`${raw}|${x.p}`];
+        return `<li class="${x.s === "s" ? "" : "bench"}">${ptag(pos)} ${esc(n)}${x.s === "r" ? ` <span class="tag">IR</span>` : x.s === "t" ? ` <span class="tag">Taxi</span>` : ""}${anyHow ? `<span class="how">${h || ""}</span>` : ""}</li>`; }).join("")}</ul>
+      ${anyHow ? `<div class="rfoot">${["D", "K", "T", "W", "FA"].filter((h) => tally[h]).map((h) => `${h} ${tally[h]}`).join(" · ")}</div>` : ""}`;
+  }
+
+  function rosterSection(src, st) {
+    if (!src.rost || !Object.keys(src.rost).length) return "";
+    const how = howMap(src);
     const tn = Object.fromEntries(st.rows.map((r) => [r.key, r.teamName]));
     const keys = Object.keys(src.rost).sort((a, b) => {
       const ra = st.rows.find((r) => r.key === ck(a)), rb = st.rows.find((r) => r.key === ck(b));
       return ((src.complete ? ra?.finalRank : ra?.regRank) ?? 99) - ((src.complete ? rb?.finalRank : rb?.regRank) ?? 99);
     });
-    return `<h2>${src.complete ? "Final rosters" : "Rosters right now"}</h2>
-      <p class="sub" style="margin-top:-4px">${src.complete ? "Each team's roster after its last game of the season" : "Each team's roster today"}, starters first.${anyHow ? " How they got him: <b>D</b> drafted · <b>K</b> keeper · <b>T</b> trade · <b>W</b> waivers · <b>FA</b> free agent." : ""}</p>
+    return `<h2 id="rosters">${src.complete ? "Final rosters" : "Rosters right now"}</h2>
+      <p class="sub" style="margin-top:-4px">${src.complete ? "Each team's roster after its last game of the season" : "Each team's roster today"}, starters first.${Object.keys(how).length ? " " + HOW_KEY : ""} Tap a team for its draft and moves.</p>
       <div class="rgrid">${keys.map((raw) => {
         const k = ck(raw);
-        const list = [...src.rost[raw]].sort((a, b) => slotRank[a.s] - slotRank[b.s] || (POS_ORDER[pinfo(src, a.p)[1]] || 5) - (POS_ORDER[pinfo(src, b.p)[1]] || 5));
-        const tally = {}; for (const x of list) { const h = how[`${raw}|${x.p}`]; if (h) tally[h] = (tally[h] || 0) + 1; }
-        return `<div class="rcard"><div class="rhead clickable" data-act="gotoRival" data-k="${esc(k)}"><b>${esc(name(k))}</b><span class="tn">${esc(tn[k] || "")}</span></div>
-          <ul class="plist">${list.map((x) => { const [n, pos] = pinfo(src, x.p), h = how[`${raw}|${x.p}`];
-            return `<li class="${x.s === "s" ? "" : "bench"}">${ptag(pos)} ${esc(n)}${x.s === "r" ? ` <span class="tag">IR</span>` : x.s === "t" ? ` <span class="tag">Taxi</span>` : ""}${anyHow ? `<span class="how">${h || ""}</span>` : ""}</li>`; }).join("")}</ul>
-          ${anyHow ? `<div class="rfoot">${["D", "K", "T", "W", "FA"].filter((h) => tally[h]).map((h) => `${h} ${tally[h]}`).join(" · ")}</div>` : ""}</div>`;
+        return `<div class="rcard"><div class="rhead clickable" data-act="teamSeason" data-year="${src.year}" data-k="${esc(k)}"><b>${esc(name(k))}</b><span class="tn">${esc(tn[k] || "")}</span></div>${rosterList(src, raw, how)}</div>`;
       }).join("")}</div>`;
+  }
+
+  // One manager's season: result, final roster, draft picks, trades and pickups
+  function teamSeasonDlg(year, key) {
+    const src = S.league.seasons.find((x) => x.year === year);
+    const st = S.stats.seasons.find((x) => x.year === year);
+    const row = st?.rows.find((r) => r.key === key);
+    if (!src || !row) return;
+    const raws = [...new Set(src.teams.map((t) => t.key).filter((k) => ck(k) === key))];
+    const how = howMap(src);
+    const res = !src.complete ? "season in progress" : st.champion === key ? "🏆 Champion" : st.runnerUp === key ? "Runner-up" : `${ord(row.finalRank)} of ${st.teamCount}`;
+    const picks = (src.draft?.picks || []).filter((p) => ck(p.k) === key);
+    const trades = (src.tx || []).filter((t) => t.t === "trade" && t.sides.some((x) => ck(x.k) === key)).map((t) => ({ s: src, t, sides: t.sides.map((x) => ({ ...x, k: ck(x.k) })) }));
+    const pickups = (src.tx || []).filter((t) => t.t !== "trade" && ck(t.k) === key);
+    const roster = raws.filter((r) => src.rost?.[r]?.length);
+    const why = src.mv == null
+      ? (S.league.isPrivate && !savedCreds(S.league.slug) ? "Rosters, drafts and moves for this season haven't loaded yet. They load the next time someone taps <b>Update this season</b> with their ESPN login." : "Rosters, drafts and moves for this season are still loading. Check back in a minute.")
+      : src.mv === -1 ? `${S.league.platform === "espn" ? "ESPN" : "Sleeper"} didn't return a roster for this season.` : "No roster saved for this season.";
+    openDlg(`<h3>${esc(name(key))} · ${year}</h3>
+      <p class="sub">${esc(row.teamName)} · ${src.complete ? `<b>${res}</b>` : res} · ${rec(row.w, row.l, row.t)} · ${tot(row.pf, row.g)} PF</p>
+      <h3 class="round">${src.complete ? "Final roster" : "Roster right now"}</h3>
+      ${roster.length ? `<div class="rcard">${roster.map((r) => rosterList(src, r, how)).join("")}</div>${Object.keys(how).length ? `<p class="sub" style="margin-top:6px">${HOW_KEY}</p>` : ""}` : `<p class="sub">${why}</p>`}
+      ${picks.length ? `<h3 class="round">Draft</h3><div class="glog">${picks.map((p) => `<span><span class="muted num">Rd ${p.r} · #${p.n}</span> ${pchip(src, p.p)}${p.$ ? ` $${p.$}` : ""}${p.kp ? " <b>K</b>" : ""}</span>`).join("")}</div>` : ""}
+      ${trades.length ? `<h3 class="round">Trades</h3><div class="tgrid">${trades.map(tradeCard).join("")}</div>` : ""}
+      ${pickups.length ? `<h3 class="round">Pickups (${pickups.length})</h3><div class="scroll"><table><tbody>${[...pickups].reverse().map((t) => `<tr><td class="l">${t.w ? "Wk " + t.w : "Pre"}</td><td class="l">${t.add.map((p) => pchip(src, p)).join("<br>") || "—"}</td><td class="l muted">${t.drop.length ? "dropped " + t.drop.map((p) => esc(pinfo(src, p)[0])).join(", ") : ""}</td><td class="l">${t.t === "waiver" ? `Waivers${t.bid != null ? ` $${t.bid}` : ""}` : "FA"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      <div class="actions"><button class="btn ghost small" data-act="gotoSeason" data-year="${year}">Open the ${year} season</button><button class="btn ghost small" data-act="gotoRival" data-k="${esc(key)}">${esc(name(key))}'s team page</button></div>`);
   }
 
   /* ----- team page summary ----- */
@@ -1127,8 +1162,8 @@
           const y = window.scrollY; render(); return window.scrollTo(0, y);
         }
         case "ptsMode": S.ptsMode = a.dataset.m; if (/^p[fa]/.test(S.sort.key)) S.sort.key = "avgFinish"; return render();
-        case "gotoRival": if (!a.dataset.k) return; S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
-        case "gotoSeason": S.tab = "seasons"; S.selYear = Number(a.dataset.year); S.selWeek = null; render(); return window.scrollTo(0, 0);
+        case "gotoRival": if (!a.dataset.k) return; closeDlg(); S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
+        case "gotoSeason": closeDlg(); S.tab = "seasons"; S.selYear = Number(a.dataset.year); S.selWeek = null; render(); return window.scrollTo(0, 0);
         case "selMgr": S.selMgr = a.dataset.k; S.openOpp = null; return render();
         case "openOpp": S.openOpp = S.openOpp === a.dataset.k ? null : a.dataset.k; return render();
         case "selYear": S.selYear = Number(a.dataset.y); S.selWeek = null; return render();
@@ -1164,6 +1199,8 @@
           } catch (err) { a.disabled = false; a.textContent = "Undo back to here"; return toast(`Couldn't undo: ${err.message}`); }
         }
         case "openRecent": return openSlug(a.dataset.slug);
+        case "teamSeason": return teamSeasonDlg(Number(a.dataset.year), a.dataset.k);
+        case "jumpRosters": e.preventDefault(); return $("rosters")?.scrollIntoView({ block: "start" });
         case "dYear": S.dYear = Number(a.dataset.y); return render();
         case "dView": S.dView = a.dataset.v; return render();
         case "mvYear": S.mvYear = a.dataset.y === "all" ? "all" : Number(a.dataset.y); S.mvAll = false; S.trAll = false; return render();

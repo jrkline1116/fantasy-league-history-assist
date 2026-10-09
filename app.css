@@ -290,3 +290,6 @@ ol.plist li,ul.plist li{display:flex;gap:6px;align-items:baseline;padding:2px 0}
 .tside .tw{margin-bottom:3px}
 .spin.inline{display:inline-block;width:14px;height:14px;border-width:2px;vertical-align:-2px;margin-right:6px}
 @media print{ .dcell,.ppos{background:none!important} .tcard,.rcard{break-inside:avoid} }
+#rosters{scroll-margin-top:120px}
+dialog .rcard{margin-top:4px}
+dialog .tgrid{grid-template-columns:1fr}
