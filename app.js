@@ -53,6 +53,8 @@
     selMgr: null, openOpp: null, selYear: null, selWeek: null,
     dYear: null, dView: "board",                  // Drafts tab
     mvYear: "all", mvMgr: "", mvAll: false,       // Trades & Waivers tab
+    rYear: null, rMgr: "",                        // Rosters tab ("" = every team)
+    back: [],                                     // where the in-page Back button returns to
     movesBusy: false,                             // fetching older seasons' drafts and moves
     espnCreds: {},      // this visit only, unless "remember" is ticked (then this browser only)
     pendingEspn: null,
@@ -60,7 +62,7 @@
     busy: false,
   };
   const TABS = [["overview", "Overview"], ["standings", "All-Time Standings"], ["teams", "Teams"], ["h2h", "Head-to-Head"], ["records", "Record Book"], ["seasons", "Seasons"]];
-  const MOVE_TABS = [["drafts", "Drafts"], ["moves", "Trades & Waivers"]];
+  const MOVE_TABS = [["rosters", "Rosters"], ["drafts", "Drafts"], ["moves", "Trades & Waivers"]];
 
   /* ---------------- small UI helpers ---------------- */
   let toastT;
@@ -240,7 +242,7 @@
     S.league = L;
     S.prefs = { h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
     S.tab = "overview"; S.minSeasons = null; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
-    S.dYear = null; S.mvYear = "all"; S.mvMgr = ""; S.mvAll = false; S.trAll = false;
+    S.dYear = null; S.mvYear = "all"; S.mvMgr = ""; S.mvAll = false; S.rYear = null; S.rMgr = ""; S.back = []; S.trAll = false;
     recompute(); setHash(L); render();
     window.scrollTo(0, 0);
   }
@@ -359,6 +361,42 @@
       </div>`;
   }
 
+  /* ---------------- in-page navigation with Back ---------------- */
+  // Jumps between tabs (tap a name → roster, tap a year → season...) remember where you were.
+  // Tapping a tab at the top starts fresh. The phone/browser back gesture works too.
+  const NAV_KEYS = ["tab", "selMgr", "openOpp", "selYear", "selWeek", "dYear", "dView", "mvYear", "mvMgr", "rYear", "rMgr"];
+  const TAB_LABEL = Object.fromEntries([...TABS, ...MOVE_TABS]);
+  function navLabel(v) {
+    if (v.tab === "teams" && v.selMgr) return `${name(v.selMgr)}'s team page`;
+    if (v.tab === "seasons" && v.selYear) return `the ${v.selYear} season`;
+    if (v.tab === "rosters") return v.rMgr ? `${name(v.rMgr)}'s ${v.rYear} roster` : `${v.rYear ?? ""} rosters`.trim();
+    if (v.tab === "moves" && v.mvMgr) return `${name(v.mvMgr)}'s trades and pickups`;
+    if (v.tab === "drafts" && v.dYear) return `the ${v.dYear} draft`;
+    return TAB_LABEL[v.tab] || "where you were";
+  }
+  function go(to) {
+    const from = Object.fromEntries(NAV_KEYS.map((k) => [k, S[k]]));
+    from.y = window.scrollY;
+    S.back.push(from);
+    if (S.back.length > 30) S.back.shift();
+    try { history.pushState({ flhaBack: S.back.length }, "", location.href); } catch { /* ignore */ }
+    closeDlg();
+    Object.assign(S, to);
+    render(); window.scrollTo(0, 0);
+  }
+  function goBack() {
+    const v = S.back.pop(); if (!v) return;
+    const { y, ...rest } = v;
+    Object.assign(S, rest);
+    render(); window.scrollTo(0, y || 0);
+    requestAnimationFrame(() => window.scrollTo(0, y || 0));
+  }
+  try { history.scrollRestoration = "manual"; } catch { /* ignore */ }
+  window.addEventListener("popstate", () => { if (S.league && S.back.length) goBack(); });
+  const backBar = () => S.back.length ? `<div class="backbar"><button class="btn ghost small" data-act="back">‹ Back to ${esc(navLabel(S.back[S.back.length - 1]))}</button></div>` : "";
+  // a manager's name that opens their roster for one season
+  const rlink = (year, k, text = name(k)) => k ? `<button class="mlink" data-act="roster" data-year="${year}" data-k="${esc(k)}" title="See ${esc(name(k))}'s ${year} roster">${esc(text)}</button>` : esc(text);
+
   /* ---------------- league views ---------------- */
   function render() {
     if (!S.league) return renderLanding();
@@ -369,8 +407,8 @@
       ${S.league.platform !== "demo" ? `<button class="btn small" data-act="share" title="Share this league's link"><span>Share</span> 🔗</button>` : ""}
       <button class="btn ghost small" data-act="managers" title="Rename or merge managers"><span>Managers</span> ✎</button>
       <button class="btn ghost small" data-act="switch" title="Open another league"><span>Switch</span> ⇄</button>`;
-    const v = { overview: vOverview, standings: vStandings, teams: vTeams, h2h: vH2H, records: vRecords, seasons: vSeasons, drafts: vDrafts, moves: vMoves }[S.tab];
-    $("main").innerHTML = head() + v();
+    const v = { overview: vOverview, standings: vStandings, teams: vTeams, h2h: vH2H, records: vRecords, seasons: vSeasons, rosters: vRosters, drafts: vDrafts, moves: vMoves }[S.tab];
+    $("main").innerHTML = backBar() + head() + v();
   }
 
   function head() {
@@ -383,7 +421,7 @@
       ${S.showShare && L.platform !== "demo" ? `<div class="sharebox"><div><b>Saved.</b> Send this link to your league. It opens right to this page on any phone or computer${L.isPrivate ? ", no ESPN login needed" : ""}.
         <div class="shareurl"><input type="text" id="shareUrl" readonly value="${esc(shareUrl(L))}" aria-label="Share link"><button class="btn small" data-act="share">${navigator.share ? "Share" : "Copy link"}</button></div></div>
         <button class="btn ghost small" data-act="hideShare" aria-label="Dismiss">✕</button></div>` : ""}
-      ${live && !["records", "drafts"].includes(S.tab) ? `<p class="tipbox">The ${live.year} season is in progress. Its finished games count toward records, points, and head-to-head, but not toward finishes or titles until it's over.</p>` : ""}`;
+      ${live && !["records", "drafts", "rosters"].includes(S.tab) ? `<p class="tipbox">The ${live.year} season is in progress. Its finished games count toward records, points, and head-to-head, but not toward finishes or titles until it's over.</p>` : ""}`;
   }
 
   function vOverview() {
@@ -415,13 +453,13 @@
         <div class="kpi"><div class="v num">${champs.size}</div><div class="l">Different champions</div></div>
       </div>
       <h2>Trophy room</h2>
-      <p class="sub" style="margin-top:-4px">Tap a manager to see that team's roster, draft and moves. Tap a year for the whole season.</p>
+      <p class="sub" style="margin-top:-4px">Tap a name for that team's roster. Tap a year for the whole season.</p>
       <div class="scroll"><table>
         <thead><tr><th class="l">Year</th><th class="l">Champion</th><th class="l">Runner-up</th><th class="l">Best regular season</th><th class="l">Most points</th></tr></thead>
         <tbody>${[...st.seasons].reverse().map((s) => {
           const t = (k) => s.rows.find((r) => r.key === k);
           const reg1 = s.rows.find((r) => r.regRank === 1); const pts = top(s, (r) => r.pf);
-          const cellM = (r, extra = "") => r ? `<td class="l mgr" data-act="teamSeason" data-year="${s.year}" data-k="${esc(r.key)}">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}${extra}</span></td>` : `<td class="l muted">—</td>`;
+          const cellM = (r, extra = "") => r ? `<td class="l mgr">${rlink(s.year, r.key)}<span class="tn">${esc(r.teamName)}${extra}</span></td>` : `<td class="l muted">—</td>`;
           return `<tr class="clickable" data-act="gotoSeason" data-year="${s.year}"><td class="l"><b>${s.year}</b></td>
             ${s.complete ? cellM(t(s.champion), "").replace('class="l mgr"', 'class="l mgr trophy"') : `<td class="l muted">In progress</td>`}
             ${s.complete ? cellM(t(s.runnerUp)) : `<td class="l muted">—</td>`}
@@ -458,7 +496,7 @@
       const l = r.by[y];
       if (!l || !l.finalRank) return `<span class="fbox none" title="${y}: not in the league">·</span>`;
       const k = l.finalRank === 1 ? "c1" : l.finalRank <= 3 ? "c3" : l.playoffs ? "cp" : l.finalRank === l.teamCount ? "cl" : "";
-      return `<span class="fbox ${k}" title="${y}: ${ord(l.finalRank)} of ${l.teamCount}${l.playoffs ? " (made playoffs)" : ""}">${l.finalRank}</span>`;
+      return `<span class="fbox ${k}" data-act="roster" data-year="${y}" data-k="${esc(r.m.key)}" title="${y}: ${ord(l.finalRank)} of ${l.teamCount}${l.playoffs ? " (made playoffs)" : ""}. Tap for the roster.">${l.finalRank}</span>`;
     };
     return `<h2>All-time finishes</h2>
       <p class="sub" style="margin-top:-4px">Ranked by titles, then 2nd-place finishes, then 3rd (tap a column to sort another way). Finished seasons only. The strip shows every season's final place, oldest to newest.</p>
@@ -469,7 +507,7 @@
           <td class="num ${r.firsts ? "trophy" : "muted"}">${r.firsts}</td><td class="num ${r.seconds ? "" : "muted"}">${r.seconds}</td><td class="num ${r.thirds ? "" : "muted"}">${r.thirds}</td>
           <td class="num">${pctTxt(r.top3, r.played)}</td><td class="num">${pctTxt(r.playoffs, r.played)}</td><td class="num ${r.lasts ? "" : "muted"}">${r.lasts}</td>
           <td class="num"><b>${f2(r.avg)}</b></td><td class="l"><span class="fstrip">${years.map((y) => box(r, y)).join("")}</span></td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">Strip key: <span class="fbox c1">1</span> champion · <span class="fbox c3">2</span> 2nd or 3rd · <span class="fbox cp">5</span> made playoffs · <span class="fbox">8</span> missed playoffs · <span class="fbox cl">12</span> last place · <span class="fbox none">·</span> not in the league. Hover or tap-and-hold a box for the year.</p>`;
+      <p class="sub" style="margin-top:8px">Strip key: <span class="fbox c1">1</span> champion · <span class="fbox c3">2</span> 2nd or 3rd · <span class="fbox cp">5</span> made playoffs · <span class="fbox">8</span> missed playoffs · <span class="fbox cl">12</span> last place · <span class="fbox none">·</span> not in the league. Tap a box for that season's roster.</p>`;
   }
 
   function vStandings() {
@@ -539,11 +577,12 @@
     const result = (l) => !l.complete ? `<span class="muted">In progress</span>` : l.champ ? `<span class="trophy">🏆 Champion</span>` : l.runnerUp ? "Runner-up" : l.playoffs ? "Playoffs" : "";
     return `<div class="chips" role="group" aria-label="Pick a team">${list.map((x) => `<button class="chip" aria-pressed="${x.key === m.key}" data-act="selMgr" data-k="${esc(x.key)}">${esc(x.name)}</button>`).join("")}</div>
       <div class="rivalhead"><span class="big">${esc(m.name)}</span>
-        <span class="sub" style="margin:0">${m.seasons.length} season${m.seasons.length === 1 ? "" : "s"} · ${m.seasons[0]}–${m.seasons[m.seasons.length - 1]}</span></div>
+        <span class="sub" style="margin:0">${m.seasons.length} season${m.seasons.length === 1 ? "" : "s"} · ${m.seasons[0]}–${m.seasons[m.seasons.length - 1]}</span>
+        ${rosterSeasons().length || S.league.movesPending ? `<button class="btn small" data-act="roster" data-year="${m.seasons[m.seasons.length - 1]}" data-k="${esc(m.key)}">Rosters ›</button>` : ""}</div>
       <p class="sub">Team names: ${m.teamNames.map(esc).join(" · ")}</p>
 
       <div class="kpis">
-        <div class="kpi ${m.titles ? "gold" : ""}"><div class="v num">${m.titles}</div><div class="l">Championship${m.titles === 1 ? "" : "s"}${m.titles ? ` (${m.titleYears.map((y) => `<button class="linkbtn" data-act="teamSeason" data-year="${y}" data-k="${esc(m.key)}">${y}</button>`).join(", ")})` : ""}</div></div>
+        <div class="kpi ${m.titles ? "gold" : ""}"><div class="v num">${m.titles}</div><div class="l">Championship${m.titles === 1 ? "" : "s"}${m.titles ? ` (${m.titleYears.map((y) => `<button class="linkbtn" data-act="roster" data-year="${y}" data-k="${esc(m.key)}">${y}</button>`).join(", ")})` : ""}</div></div>
         <div class="kpi"><div class="v num">${rec(m.w, m.l, m.t)}</div><div class="l">All-time record · ${pct(m.winPct)}</div></div>
         <div class="kpi"><div class="v num">${Math.round(m.pf).toLocaleString()}</div><div class="l">Points for · ${f1(m.pfPerGame)} / game</div></div>
         <div class="kpi"><div class="v num">${Math.round(m.pa).toLocaleString()}</div><div class="l">Points against · ${f1(m.paPerGame)} / game</div></div>
@@ -574,10 +613,10 @@
       <h2>Season by season</h2>
       <div class="scroll"><table>
         <thead><tr><th class="l">Year</th><th class="l">Team</th><th>Finish</th><th>Reg. season</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>High</th><th>Low</th><th class="l">Result</th></tr></thead>
-        <tbody>${m.lines.map((l) => `<tr class="clickable" data-act="teamSeason" data-year="${l.year}" data-k="${esc(m.key)}"><td class="l"><b>${l.year}</b></td><td class="l">${esc(l.teamName)}</td>
+        <tbody>${m.lines.map((l) => `<tr class="clickable" data-act="roster" data-year="${l.year}" data-k="${esc(m.key)}"><td class="l"><b>${l.year}</b></td><td class="l">${esc(l.teamName)}</td>
           <td class="num">${l.complete ? `${ord(l.finalRank)} <span class="muted">of ${l.teamCount}</span>` : "—"}</td><td class="num">${ord(l.regRank)}</td><td class="num">${rec(l.w, l.l, l.t)}</td>
           <td class="num">${tot(l.pf, l.g)}</td><td class="num">${tot(l.pa, l.g)}</td><td class="num">${f1(l.high)}</td><td class="num">${f1(l.low)}</td><td class="l">${result(l)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">W-L, PF and PA are regular season. High and low include playoff games. Tap a year for that team's roster, draft and moves.</p>
+      <p class="sub" style="margin-top:8px">W-L, PF and PA are regular season. High and low include playoff games. Tap a year for that season's roster, draft and moves.</p>
 
       <h2>Against every opponent</h2>
       <p class="sub">${S.prefs.h2hPlayoffs ? "Regular season and playoff games." : "Regular season games only."} Tap a row for every game.</p>
@@ -621,32 +660,32 @@
     const five = (a) => a.slice(0, 5);
     return `<div class="recgrid">
       ${panel("Highest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th>`,
-        five(R.highScores).map((x) => `<tr><td class="l mgr">${esc(name(x.me))}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${esc(name(x.op))} (${f1(x.their)})</td></tr>`).join(""))}
+        five(R.highScores).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td></tr>`).join(""))}
       ${panel("Lowest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th>`,
-        five(R.lowScores).map((x) => `<tr><td class="l mgr">${esc(name(x.me))}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${esc(name(x.op))} (${f1(x.their)})</td></tr>`).join(""))}
+        five(R.lowScores).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td></tr>`).join(""))}
       ${panel("Biggest blowouts", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th>`,
-        five(R.blowouts).map((x) => `<tr><td class="l mgr">${esc(name(x.win))}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${esc(name(x.lose))} <span class="muted">${f1(x.ws)}–${f1(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
+        five(R.blowouts).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f1(x.ws)}–${f1(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
       ${panel("Closest games", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th>`,
-        five(R.closest).map((x) => `<tr><td class="l mgr">${esc(name(x.win))}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${esc(name(x.lose))} <span class="muted">${f2(x.ws)}–${f2(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
+        five(R.closest).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f2(x.ws)}–${f2(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
       ${panel("Longest winning streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th>`,
-        five(R.winStreaks).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
+        five(R.winStreaks).map((x) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
       ${panel("Longest losing streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th>`,
-        five(R.lossStreaks).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
+        five(R.lossStreaks).map((x) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
       ${panel("Best regular seasons", `<th class="l">Manager</th><th>Record</th><th>Year</th><th>PF</th>`,
-        five(R.bestSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${tot(x.pf, x.g)}</td></tr>`).join(""))}
+        five(R.bestSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${tot(x.pf, x.g)}</td></tr>`).join(""))}
       ${panel("Highest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
-        five(R.mostPointsSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
+        five(R.mostPointsSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
       ${panel("Lowest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
-        five(R.fewestPointsSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
+        five(R.fewestPointsSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
       ${panel("Highest combined scores", `<th class="l">Game</th><th>Total</th><th class="l">When</th>`,
-        five(R.highCombined).map((x) => `<tr><td class="l">${esc(name(x.a))} ${f1(x.as)} – ${f1(x.bs)} ${esc(name(x.b))}</td><td class="num"><b>${f1(x.as + x.bs)}</b></td><td class="l">${wk(x)}</td></tr>`).join(""))}
+        five(R.highCombined).map((x) => `<tr><td class="l">${rlink(x.year, x.a)} ${f1(x.as)} – ${f1(x.bs)} ${rlink(x.year, x.b)}</td><td class="num"><b>${f1(x.as + x.bs)}</b></td><td class="l">${wk(x)}</td></tr>`).join(""))}
     </div>
-    <p class="sub" style="margin-top:10px">Regular season and playoff games; consolation games are left out. Streaks carry over from one season to the next.</p>`;
+    <p class="sub" style="margin-top:10px">Regular season and playoff games; consolation games are left out. Streaks carry over from one season to the next. Tap a name for that team's roster that season.</p>`;
   }
 
-  function matchup(g, tn) {
+  function matchup(g, tn, year) {
     const aw = g.as > g.bs, bw = g.bs > g.as;
-    const side = (k, sc, win) => `<div class="mside ${win ? "win" : ""}"><span class="mname">${esc(name(k))}<span class="tn">${esc(tn[k] || "")}</span></span><span class="mscore num">${f2(sc)}</span></div>`;
+    const side = (k, sc, win) => `<div class="mside ${win ? "win" : ""}"><span class="mname">${rlink(year, k)}<span class="tn">${esc(tn[k] || "")}</span></span><span class="mscore num">${f2(sc)}</span></div>`;
     return `<div class="mu">${side(g.a, g.as, aw)}${side(g.b, g.bs, bw)}</div>`;
   }
 
@@ -672,9 +711,9 @@
       <h2>${s.complete ? "Final standings" : "Standings so far"}</h2>
       <div class="scroll"><table>
         <thead><tr><th>${s.complete ? "Final" : "Now"}</th><th class="l">Manager</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>Reg. season</th><th class="l">Result</th></tr></thead>
-        <tbody>${s.rows.map((r) => `<tr class="clickable" data-act="teamSeason" data-year="${s.year}" data-k="${esc(r.key)}"><td class="num rank1">${s.complete ? ord(r.finalRank) : ord(r.regRank)}</td><td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}</span></td>
+        <tbody>${s.rows.map((r) => `<tr class="clickable" data-act="roster" data-year="${s.year}" data-k="${esc(r.key)}"><td class="num rank1">${s.complete ? ord(r.finalRank) : ord(r.regRank)}</td><td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}</span></td>
           <td class="num">${rec(r.w, r.l, r.t)}</td><td class="num">${tot(r.pf, r.g)}</td><td class="num">${tot(r.pa, r.g)}</td><td class="num">${ord(r.regRank)}</td><td class="l">${result(r)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">Records and points are regular season. Tap a team for its roster, draft and moves.${S.league.seasons.find((x) => x.year === s.year)?.rost ? ` <a href="#rosters" data-act="jumpRosters">Jump to every team's final roster</a>.` : ""} ${S.league.seasons.find((x) => x.year === s.year)?.medianScoring ? "This league also plays the weekly median; those extra wins count toward seeding but aren't head-to-head games." : ""}</p>
+      <p class="sub" style="margin-top:8px">Records and points are regular season. Tap a team for its roster, draft and moves.${S.league.seasons.find((x) => x.year === s.year)?.rost ? ` <button class="linkbtn" data-act="roster" data-year="${s.year}" data-k="">See every team's ${s.year} roster</button>.` : ""} ${S.league.seasons.find((x) => x.year === s.year)?.medianScoring ? "This league also plays the weekly median; those extra wins count toward seeding but aren't head-to-head games." : ""}</p>
 
       <h2>${s.year} records</h2>
       <div class="cards">${gc("Highest score", R.high, "gold")}${gc("Lowest score", R.low)}${mc("Biggest blowout", R.blowout)}${mc("Closest game", R.closest)}</div>
@@ -686,7 +725,7 @@
         <select id="weekSel" data-act-change="weekSel">${regWeeks.map((w) => `<option value="${w}" ${w === S.selWeek ? "selected" : ""}>Week ${w}</option>`).join("")}</select>
         <button class="btn ghost small" data-act="week" data-w="${regWeeks[wi + 1] ?? ""}" ${wi >= regWeeks.length - 1 ? "disabled" : ""} aria-label="Next week">›</button>
       </div>
-      <div class="mugrid">${weekGames.map((g) => matchup(g, tn)).join("")}</div>` : ""}
+      <div class="mugrid">${weekGames.map((g) => matchup(g, tn, s.year)).join("")}</div>` : ""}
 
       ${po.length ? `<h2>Playoffs</h2>
       ${rounds.map((r, i) => {
@@ -695,11 +734,10 @@
         // last round: the game with the champion is the final, the rest are placement games (3rd place)
         const fin = last && s.champion ? gs.filter((g) => g.a === s.champion || g.b === s.champion) : gs;
         const rest = last && s.champion ? gs.filter((g) => !fin.includes(g)) : [];
-        return `<h3 class="round">${last && s.champion ? "Championship" : roundName(r, i)}</h3><div class="mugrid">${fin.map((g) => matchup(g, tn)).join("")}</div>`
-          + (rest.length ? `<h3 class="round">3rd place game</h3><div class="mugrid">${rest.map((g) => matchup(g, tn)).join("")}</div>` : "");
+        return `<h3 class="round">${last && s.champion ? "Championship" : roundName(r, i)}</h3><div class="mugrid">${fin.map((g) => matchup(g, tn, s.year)).join("")}</div>`
+          + (rest.length ? `<h3 class="round">3rd place game</h3><div class="mugrid">${rest.map((g) => matchup(g, tn, s.year)).join("")}</div>` : "");
       }).join("")}` : ""}
-
-      ${rosterSection(S.league.seasons.find((x) => x.year === s.year), s)}`;
+`;
   }
 
   /* ---------------- drafts, rosters, trades and pickups ---------------- */
@@ -766,7 +804,7 @@
       <div class="toolbar"><p class="sub" style="margin:0">${s.year} · ${d.type === "auction" ? "auction" : d.type === "linear" ? "linear draft" : "snake draft"} · ${d.picks.length} picks${d.picks.some((p) => p.kp) ? " · <b>K</b> = keeper" : ""}</p>
         ${d.type === "auction" ? "" : `<div class="seg" role="group" aria-label="Draft view">${[["board", "Draft board"], ["team", "By manager"]].map(([k, l]) => `<button aria-pressed="${view === k}" data-act="dView" data-v="${k}">${l}</button>`).join("")}</div>`}</div>
       ${view === "board" ? draftBoard(s) : view === "auction" ? auctionTable(s) : draftByTeam(s)}
-      <p class="sub" style="margin-top:8px">Positions: ${["QB", "RB", "WR", "TE", "K", "D/ST"].map(ptag).join(" ")} · Tap a manager for their team page.</p>
+      <p class="sub" style="margin-top:8px">Positions: ${["QB", "RB", "WR", "TE", "K", "D/ST"].map(ptag).join(" ")} · Tap a manager for their ${s.year} roster.</p>
       ${draftAllTime(ds)}`;
   }
 
@@ -784,7 +822,7 @@
       return `<td class="dcell ${posCls(pos)}"><span class="dn">${esc(n)}</span><span class="dm">${esc(pos)}${tm ? " · " + esc(tm) : ""} · #${p.n}${p.kp ? ` · <b>K</b>` : ""}</span>${traded ? `<span class="dt">→ ${esc(shortName(ck(p.k)))}</span>` : ""}</td>`;
     };
     return `<div class="scroll"><table class="board">
-      <thead><tr><th class="l">Rd</th>${slots.map((sl) => `<th class="l clickable" data-act="gotoRival" data-k="${esc(ck(owner[sl] || ""))}">${owner[sl] ? esc(shortName(ck(owner[sl]))) : `Slot ${sl}`}</th>`).join("")}</tr></thead>
+      <thead><tr><th class="l">Rd</th>${slots.map((sl) => `<th class="l">${owner[sl] ? rlink(s.year, ck(owner[sl]), shortName(ck(owner[sl]))) : `Slot ${sl}`}</th>`).join("")}</tr></thead>
       <tbody>${rounds.map((r) => `<tr><th class="l rnd">${r}</th>${slots.map((sl) => cell(at[`${r}:${sl}`], sl)).join("")}</tr>`).join("")}</tbody></table></div>
       <p class="sub" style="margin-top:6px">Columns are the round-1 draft order. "→ name" means that pick was traded and someone else made it.</p>`;
   }
@@ -793,7 +831,7 @@
     const by = {};
     for (const p of s.draft.picks) (by[ck(p.k)] ||= []).push(p);
     const keys = Object.keys(by).sort((a, b) => by[a][0].n - by[b][0].n);
-    return `<div class="rgrid">${keys.map((k) => `<div class="rcard"><div class="rhead clickable" data-act="gotoRival" data-k="${esc(k)}"><b>${esc(name(k))}</b></div>
+    return `<div class="rgrid">${keys.map((k) => `<div class="rcard"><div class="rhead clickable" data-act="roster" data-year="${s.year}" data-k="${esc(k)}"><b>${esc(name(k))}</b></div>
       <ol class="plist">${by[k].map((p) => { const [n, pos] = pinfo(s, p.p); return `<li><span class="rk num">${p.r}.${String(p.n - (p.r - 1) * (s.draft.teams || by[k].length)).padStart(2, "0")}</span> ${esc(n)} ${ptag(pos)}${p.kp ? ` <b>K</b>` : ""}</li>`; }).join("")}</ol></div>`).join("")}</div>`;
   }
 
@@ -803,7 +841,7 @@
     for (const p of picks) { const k = ck(p.k); const x = (spend[k] ||= { k, $: 0, n: 0, top: p }); x.$ += p.$ || 0; x.n++; }
     return `<h3 class="round">Spending by manager</h3>
       <div class="scroll"><table><thead><tr><th class="l">Manager</th><th>Spent</th><th>Players</th><th class="l">Biggest buy</th></tr></thead>
-      <tbody>${Object.values(spend).sort((a, b) => b.$ - a.$).map((x) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(x.k)}"><td class="l mgr">${esc(name(x.k))}</td><td class="num">$${x.$}</td><td class="num">${x.n}</td><td class="l">${pchip(s, x.top.p)} $${x.top.$ || 0}</td></tr>`).join("")}</tbody></table></div>
+      <tbody>${Object.values(spend).sort((a, b) => b.$ - a.$).map((x) => `<tr class="clickable" data-act="roster" data-year="${s.year}" data-k="${esc(x.k)}"><td class="l mgr">${esc(name(x.k))}</td><td class="num">$${x.$}</td><td class="num">${x.n}</td><td class="l">${pchip(s, x.top.p)} $${x.top.$ || 0}</td></tr>`).join("")}</tbody></table></div>
       <h3 class="round">Every player, most expensive first</h3>
       <div class="scroll"><table><thead><tr><th>Price</th><th class="l">Player</th><th class="l">Manager</th><th>Nominated</th></tr></thead>
       <tbody>${picks.map((p) => `<tr><td class="num"><b>$${p.$ || 0}</b></td><td class="l">${pchip(s, p.p)}${p.kp ? " <b>K</b>" : ""}</td><td class="l">${esc(name(ck(p.k)))}</td><td class="num muted">#${p.n}</td></tr>`).join("")}</tbody></table></div>`;
@@ -835,7 +873,7 @@
       <div class="scroll"><table class="compact firsts"><thead><tr><th class="l">Manager</th>${years.map((y) => `<th class="l">${y}</th>`).join("")}</tr></thead>
       <tbody>${list.map((m) => `<tr><td class="l mgr clickable" data-act="gotoRival" data-k="${esc(m.k)}">${esc(name(m.k))}</td>${years.map((y) => {
         const ps = m.first[y]; const s = ds.find((x) => x.year === y);
-        return `<td class="l">${ps ? ps.map((p) => `${pchip(s, p.p)}${p.kp ? " <b>K</b>" : ""}`).join("<br>") : m.drafts.has(y) ? `<span class="muted">none</span>` : `<span class="muted">·</span>`}</td>`;
+        return `<td class="l${ps ? " clickable" : ""}"${ps ? ` data-act="roster" data-year="${y}" data-k="${esc(m.k)}"` : ""}>${ps ? ps.map((p) => `${pchip(s, p.p)}${p.kp ? " <b>K</b>" : ""}`).join("<br>") : m.drafts.has(y) ? `<span class="muted">none</span>` : `<span class="muted">·</span>`}</td>`;
       }).join("")}</tr>`).join("")}</tbody></table></div>
       <h2>Draft habits</h2>
       <div class="scroll"><table class="compact"><thead><tr><th class="l">Manager</th><th>Drafts</th><th class="l">First pick's position</th><th>First QB<br>(avg round)</th><th>Keepers</th><th>Still on roster<br>at season end</th></tr></thead>
@@ -884,7 +922,7 @@
 
   function tradeCard({ s, t, sides }) {
     return `<div class="tcard"><div class="th">${s.year} · ${wkLabel(t)}${t.at ? ` · ${shortDate(t.at)}` : ""}</div>
-      ${sides.map((x) => `<div class="tside"><div class="tw clickable" data-act="gotoRival" data-k="${esc(x.k)}"><b>${esc(name(x.k))}</b> got</div><div class="tg">${[
+      ${sides.map((x) => `<div class="tside"><div class="tw"><b>${rlink(s.year, x.k)}</b> got</div><div class="tg">${[
         ...x.get.map((p) => pchip(s, p)), ...(x.picks || []).map((pk) => `<span class="pl">${pickLabel(pk)}</span>`),
         ...(x.faab ? [`<span class="pl">$${x.faab} FAAB</span>`] : []),
       ].join("") || `<span class="muted">nothing</span>`}</div></div>`).join("")}</div>`;
@@ -940,7 +978,7 @@
       ${tr.length ? `<div class="tgrid">${(S.trAll ? tr : tr.slice(0, 12)).map(tradeCard).join("")}</div>${tr.length > 12 && !S.trAll ? `<div class="actions"><button class="btn ghost small" data-act="trAll">Show all ${tr.length} trades</button></div>` : ""}` : `<p class="sub">No trades${S.mvMgr ? " for this manager" : ""} in ${S.mvYear === "all" ? "these seasons" : S.mvYear}.</p>`}
       <h2>Waiver and free-agent pickups${S.mvMgr ? ` · ${esc(name(S.mvMgr))}` : ""}</h2>
       ${pu.length ? `<div class="scroll"><table><thead><tr><th class="l">When</th>${S.mvMgr ? "" : `<th class="l">Manager</th>`}<th class="l">Added</th><th class="l">Dropped</th><th class="l">How</th></tr></thead>
-      <tbody>${shown.map((x) => `<tr><td class="l">${x.s.year} · ${x.t.w ? "wk " + x.t.w : "pre"}<span class="tn">${shortDate(x.t.at)}</span></td>${S.mvMgr ? "" : `<td class="l mgr">${esc(name(x.k))}</td>`}
+      <tbody>${shown.map((x) => `<tr><td class="l">${x.s.year} · ${x.t.w ? "wk " + x.t.w : "pre"}<span class="tn">${shortDate(x.t.at)}</span></td>${S.mvMgr ? "" : `<td class="l mgr">${rlink(x.s.year, x.k)}</td>`}
         <td class="l">${x.t.add.map((p) => pchip(x.s, p)).join("<br>") || `<span class="muted">—</span>`}</td><td class="l muted">${x.t.drop.map((p) => esc(pinfo(x.s, p)[0])).join("<br>") || "—"}</td>
         <td class="l">${x.t.t === "waiver" ? `Waivers${x.t.bid != null ? ` <b>$${x.t.bid}</b>` : ""}` : "Free agent"}</td></tr>`).join("")}</tbody></table></div>
       ${pu.length > shown.length ? `<div class="actions"><button class="btn ghost small" data-act="mvAll">Show all ${pu.length}</button></div>` : ""}` : `<p class="sub">No pickups${S.mvMgr ? " for this manager" : ""} in ${S.mvYear === "all" ? "these seasons" : S.mvYear}.</p>`}
@@ -972,46 +1010,76 @@
       ${anyHow ? `<div class="rfoot">${["D", "K", "T", "W", "FA"].filter((h) => tally[h]).map((h) => `${h} ${tally[h]}`).join(" · ")}</div>` : ""}`;
   }
 
-  function rosterSection(src, st) {
-    if (!src.rost || !Object.keys(src.rost).length) return "";
+  /* ----- Rosters tab ----- */
+  const rosterSeasons = () => S.league.seasons.filter((s) => s.rost && Object.keys(s.rost).length).sort((a, b) => b.year - a.year);
+  const rosterKeys = (year) => (S.stats.seasons.find((x) => x.year === year)?.rows || []).map((r) => r.key);
+
+  function vRosters() {
+    const rs = rosterSeasons();
+    const years = [...S.stats.years].reverse();
+    if (!years.includes(S.rYear)) S.rYear = rs[0]?.year ?? years[0];
+    const st = S.stats.seasons.find((x) => x.year === S.rYear);
+    if (S.rMgr && !rosterKeys(S.rYear).includes(S.rMgr)) S.rMgr = "";
+    const rows = [...st.rows].sort((a, b) => ((st.complete ? a.finalRank : a.regRank) ?? 99) - ((st.complete ? b.finalRank : b.regRank) ?? 99));
+    return `${movesNote()}
+      <div class="chips" role="group" aria-label="Season">${years.map((y) => `<button class="chip" aria-pressed="${y === S.rYear}" data-act="rYear" data-y="${y}">${y}</button>`).join("")}</div>
+      <div class="chips" role="group" aria-label="Team"><button class="chip" aria-pressed="${!S.rMgr}" data-act="rMgr" data-k="">All teams</button>${rows.map((r) => `<button class="chip" aria-pressed="${S.rMgr === r.key}" data-act="rMgr" data-k="${esc(r.key)}">${esc(name(r.key))}</button>`).join("")}</div>
+      ${S.rMgr ? teamSeasonHtml(S.rYear, S.rMgr) : allRostersHtml(S.rYear, st)}`;
+  }
+
+  function noRosterMsg(src) {
+    if (!src || src.mv == null) return S.league.isPrivate && !savedCreds(S.league.slug)
+      ? "Rosters for this season haven't loaded yet. They load the next time someone taps <b>Update this season</b> with their ESPN login."
+      : "Rosters for this season are still loading. Check back in a minute.";
+    return `${S.league.platform === "espn" ? "ESPN" : "Sleeper"} didn't return rosters for this season.`;
+  }
+
+  function allRostersHtml(year, st) {
+    const src = S.league.seasons.find((x) => x.year === year);
+    if (!src?.rost || !Object.keys(src.rost).length) return `<p class="sub">${noRosterMsg(src)}</p>`;
     const how = howMap(src);
-    const tn = Object.fromEntries(st.rows.map((r) => [r.key, r.teamName]));
     const keys = Object.keys(src.rost).sort((a, b) => {
       const ra = st.rows.find((r) => r.key === ck(a)), rb = st.rows.find((r) => r.key === ck(b));
       return ((src.complete ? ra?.finalRank : ra?.regRank) ?? 99) - ((src.complete ? rb?.finalRank : rb?.regRank) ?? 99);
     });
-    return `<h2 id="rosters">${src.complete ? "Final rosters" : "Rosters right now"}</h2>
-      <p class="sub" style="margin-top:-4px">${src.complete ? "Each team's roster after its last game of the season" : "Each team's roster today"}, starters first.${Object.keys(how).length ? " " + HOW_KEY : ""} Tap a team for its draft and moves.</p>
+    const res = (k) => { const r = st.rows.find((x) => x.key === k); return !r ? "" : !src.complete ? `${ord(r.regRank)} now` : k === st.champion ? "🏆 Champion" : `${ord(r.finalRank)}`; };
+    return `<p class="sub">${src.complete ? `Every team's roster after its last game of ${year}` : "Every team's roster today"}, in order of finish, starters first.${Object.keys(how).length ? " " + HOW_KEY : ""} Tap a team for its draft and moves.</p>
       <div class="rgrid">${keys.map((raw) => {
-        const k = ck(raw);
-        return `<div class="rcard"><div class="rhead clickable" data-act="teamSeason" data-year="${src.year}" data-k="${esc(k)}"><b>${esc(name(k))}</b><span class="tn">${esc(tn[k] || "")}</span></div>${rosterList(src, raw, how)}</div>`;
+        const k = ck(raw), r = st.rows.find((x) => x.key === k);
+        return `<div class="rcard"><div class="rhead clickable" data-act="rMgr" data-k="${esc(k)}"><b>${esc(name(k))}</b> <span class="rres">${res(k)}</span><span class="tn">${esc(r?.teamName || "")}</span></div>${rosterList(src, raw, how)}</div>`;
       }).join("")}</div>`;
   }
 
-  // One manager's season: result, final roster, draft picks, trades and pickups
-  function teamSeasonDlg(year, key) {
+  // One manager's season: result, roster, draft picks, trades and pickups
+  function teamSeasonHtml(year, key) {
     const src = S.league.seasons.find((x) => x.year === year);
     const st = S.stats.seasons.find((x) => x.year === year);
     const row = st?.rows.find((r) => r.key === key);
-    if (!src || !row) return;
+    if (!src || !row) return "";
     const raws = [...new Set(src.teams.map((t) => t.key).filter((k) => ck(k) === key))];
     const how = howMap(src);
-    const res = !src.complete ? "season in progress" : st.champion === key ? "🏆 Champion" : st.runnerUp === key ? "Runner-up" : `${ord(row.finalRank)} of ${st.teamCount}`;
+    const res = !src.complete ? `${ord(row.regRank)} so far` : st.champion === key ? `<span class="trophy">🏆 Champion</span>` : st.runnerUp === key ? "Runner-up" : `Finished ${ord(row.finalRank)} of ${st.teamCount}`;
     const picks = (src.draft?.picks || []).filter((p) => ck(p.k) === key);
     const trades = (src.tx || []).filter((t) => t.t === "trade" && t.sides.some((x) => ck(x.k) === key)).map((t) => ({ s: src, t, sides: t.sides.map((x) => ({ ...x, k: ck(x.k) })) }));
     const pickups = (src.tx || []).filter((t) => t.t !== "trade" && ck(t.k) === key);
     const roster = raws.filter((r) => src.rost?.[r]?.length);
-    const why = src.mv == null
-      ? (S.league.isPrivate && !savedCreds(S.league.slug) ? "Rosters, drafts and moves for this season haven't loaded yet. They load the next time someone taps <b>Update this season</b> with their ESPN login." : "Rosters, drafts and moves for this season are still loading. Check back in a minute.")
-      : src.mv === -1 ? `${S.league.platform === "espn" ? "ESPN" : "Sleeper"} didn't return a roster for this season.` : "No roster saved for this season.";
-    openDlg(`<h3>${esc(name(key))} · ${year}</h3>
-      <p class="sub">${esc(row.teamName)} · ${src.complete ? `<b>${res}</b>` : res} · ${rec(row.w, row.l, row.t)} · ${tot(row.pf, row.g)} PF</p>
-      <h3 class="round">${src.complete ? "Final roster" : "Roster right now"}</h3>
-      ${roster.length ? `<div class="rcard">${roster.map((r) => rosterList(src, r, how)).join("")}</div>${Object.keys(how).length ? `<p class="sub" style="margin-top:6px">${HOW_KEY}</p>` : ""}` : `<p class="sub">${why}</p>`}
-      ${picks.length ? `<h3 class="round">Draft</h3><div class="glog">${picks.map((p) => `<span><span class="muted num">Rd ${p.r} · #${p.n}</span> ${pchip(src, p.p)}${p.$ ? ` $${p.$}` : ""}${p.kp ? " <b>K</b>" : ""}</span>`).join("")}</div>` : ""}
+    const myYears = S.stats.managerByKey[key]?.seasons || [];
+    const prev = [...myYears].filter((y) => y < year).pop(), next = myYears.find((y) => y > year);
+    return `<div class="rivalhead"><span class="big">${esc(name(key))} · ${year}</span>
+        <span class="sub" style="margin:0">${esc(row.teamName)} · ${res} · ${rec(row.w, row.l, row.t)} · ${tot(row.pf, row.g)} PF</span></div>
+      <div class="actions" style="margin:0 0 12px">
+        <button class="btn ghost small" data-act="rYear" data-y="${prev ?? ""}" ${prev ? "" : "disabled"}>‹ ${prev ?? ""}</button>
+        <button class="btn ghost small" data-act="rYear" data-y="${next ?? ""}" ${next ? "" : "disabled"}>${next ?? ""} ›</button>
+        <button class="btn ghost small" data-act="gotoRival" data-k="${esc(key)}">Team page</button>
+        <button class="btn ghost small" data-act="gotoSeason" data-year="${year}">The ${year} season</button></div>
+      <div class="tsgrid">
+        <div><h3 class="round">${src.complete ? "Final roster" : "Roster right now"}</h3>
+          ${roster.length ? `<div class="rcard">${roster.map((r) => rosterList(src, r, how)).join("")}</div>${Object.keys(how).length ? `<p class="sub" style="margin-top:6px">${HOW_KEY}</p>` : ""}` : `<p class="sub">${noRosterMsg(src)}</p>`}</div>
+        <div>${picks.length ? `<h3 class="round">Draft</h3><div class="rcard"><ol class="plist">${picks.map((p) => `<li><span class="rk num">${p.r}.${String(p.n - (p.r - 1) * (src.draft.teams || 1)).padStart(2, "0")}</span> ${pchip(src, p.p)}${p.$ ? ` $${p.$}` : ""}${p.kp ? " <b>K</b>" : ""}</li>`).join("")}</ol></div>` : ""}</div>
+      </div>
       ${trades.length ? `<h3 class="round">Trades</h3><div class="tgrid">${trades.map(tradeCard).join("")}</div>` : ""}
-      ${pickups.length ? `<h3 class="round">Pickups (${pickups.length})</h3><div class="scroll"><table><tbody>${[...pickups].reverse().map((t) => `<tr><td class="l">${t.w ? "Wk " + t.w : "Pre"}</td><td class="l">${t.add.map((p) => pchip(src, p)).join("<br>") || "—"}</td><td class="l muted">${t.drop.length ? "dropped " + t.drop.map((p) => esc(pinfo(src, p)[0])).join(", ") : ""}</td><td class="l">${t.t === "waiver" ? `Waivers${t.bid != null ? ` $${t.bid}` : ""}` : "FA"}</td></tr>`).join("")}</tbody></table></div>` : ""}
-      <div class="actions"><button class="btn ghost small" data-act="gotoSeason" data-year="${year}">Open the ${year} season</button><button class="btn ghost small" data-act="gotoRival" data-k="${esc(key)}">${esc(name(key))}'s team page</button></div>`);
+      ${pickups.length ? `<h3 class="round">Waiver and free-agent pickups (${pickups.length})</h3><div class="scroll"><table><thead><tr><th class="l">When</th><th class="l">Added</th><th class="l">Dropped</th><th class="l">How</th></tr></thead><tbody>${[...pickups].reverse().map((t) => `<tr><td class="l">${t.w ? "Week " + t.w : "Preseason"}<span class="tn">${shortDate(t.at)}</span></td><td class="l">${t.add.map((p) => pchip(src, p)).join("<br>") || "—"}</td><td class="l muted">${t.drop.map((p) => esc(pinfo(src, p)[0])).join("<br>") || "—"}</td><td class="l">${t.t === "waiver" ? `Waivers${t.bid != null ? ` <b>$${t.bid}</b>` : ""}` : "Free agent"}</td></tr>`).join("")}</tbody></table></div>` : ""}
+      ${!src.tx?.length && src.mv === 1 && S.league.platform === "espn" && year < 2019 ? `<p class="sub">ESPN only keeps trades and pickups from 2019 on.</p>` : ""}`;
   }
 
   /* ----- team page summary ----- */
@@ -1150,7 +1218,11 @@
         case "closeDlg": return closeDlg();
         case "demo": return openLeague(FLHDemo.demoLeague());
         case "switch": S.showShare = false; return renderLanding();
-        case "tab": S.tab = a.dataset.tab; render(); return window.scrollTo(0, 0);
+        case "tab": S.tab = a.dataset.tab; S.back = []; render(); return window.scrollTo(0, 0);
+        case "back": return S.back.length && history.state?.flhaBack ? history.back() : goBack();
+        case "roster": return go({ tab: "rosters", rYear: Number(a.dataset.year) || null, rMgr: a.dataset.k || "" });
+        case "rYear": S.rYear = Number(a.dataset.y); if (S.rMgr && !rosterKeys(S.rYear).includes(S.rMgr)) S.rMgr = ""; return render();
+        case "rMgr": S.rMgr = a.dataset.k || ""; render(); return window.scrollTo(0, 0);
         case "sort": {
           const k = a.dataset.k;
           S.sort = S.sort.key === k ? { key: k, asc: !S.sort.asc } : { key: k, asc: ["name", "avgFinish", "avgRegFinish", "bestFinish", "paPerGame", "paPerSeason", "pa"].includes(k) };
@@ -1162,8 +1234,8 @@
           const y = window.scrollY; render(); return window.scrollTo(0, y);
         }
         case "ptsMode": S.ptsMode = a.dataset.m; if (/^p[fa]/.test(S.sort.key)) S.sort.key = "avgFinish"; return render();
-        case "gotoRival": if (!a.dataset.k) return; closeDlg(); S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
-        case "gotoSeason": closeDlg(); S.tab = "seasons"; S.selYear = Number(a.dataset.year); S.selWeek = null; render(); return window.scrollTo(0, 0);
+        case "gotoRival": if (!a.dataset.k) return; return go({ tab: "teams", selMgr: a.dataset.k, openOpp: null });
+        case "gotoSeason": return go({ tab: "seasons", selYear: Number(a.dataset.year), selWeek: null });
         case "selMgr": S.selMgr = a.dataset.k; S.openOpp = null; return render();
         case "openOpp": S.openOpp = S.openOpp === a.dataset.k ? null : a.dataset.k; return render();
         case "selYear": S.selYear = Number(a.dataset.y); S.selWeek = null; return render();
@@ -1199,14 +1271,12 @@
           } catch (err) { a.disabled = false; a.textContent = "Undo back to here"; return toast(`Couldn't undo: ${err.message}`); }
         }
         case "openRecent": return openSlug(a.dataset.slug);
-        case "teamSeason": return teamSeasonDlg(Number(a.dataset.year), a.dataset.k);
-        case "jumpRosters": e.preventDefault(); return $("rosters")?.scrollIntoView({ block: "start" });
         case "dYear": S.dYear = Number(a.dataset.y); return render();
         case "dView": S.dView = a.dataset.v; return render();
         case "mvYear": S.mvYear = a.dataset.y === "all" ? "all" : Number(a.dataset.y); S.mvAll = false; S.trAll = false; return render();
         case "trAll": { const y = window.scrollY; S.trAll = true; render(); return window.scrollTo(0, y); }
         case "mvAll": { const y = window.scrollY; S.mvAll = true; render(); return window.scrollTo(0, y); }
-        case "mvPick": S.tab = "moves"; S.mvMgr = a.dataset.k; S.mvAll = false; S.trAll = false; render(); return window.scrollTo(0, 0);
+        case "mvPick": S.mvAll = false; S.trAll = false; return go({ tab: "moves", mvMgr: a.dataset.k });
         case "movesGo": return fetchMoves();
 
         /* Sleeper */

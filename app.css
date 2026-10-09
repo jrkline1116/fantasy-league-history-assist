@@ -290,6 +290,11 @@ ol.plist li,ul.plist li{display:flex;gap:6px;align-items:baseline;padding:2px 0}
 .tside .tw{margin-bottom:3px}
 .spin.inline{display:inline-block;width:14px;height:14px;border-width:2px;vertical-align:-2px;margin-right:6px}
 @media print{ .dcell,.ppos{background:none!important} .tcard,.rcard{break-inside:avoid} }
-#rosters{scroll-margin-top:120px}
-dialog .rcard{margin-top:4px}
-dialog .tgrid{grid-template-columns:1fr}
+/* names that open a roster, the Back bar, one team's season */
+.mlink{background:none;border:0;padding:0;font:inherit;color:inherit;cursor:pointer;text-align:left;text-decoration:underline dotted;text-decoration-color:var(--muted);text-underline-offset:3px}
+.mlink:hover{color:var(--brand);text-decoration-style:solid}
+.fbox[data-act]{cursor:pointer}
+.fbox[data-act]:hover{outline:2px solid var(--brand);outline-offset:1px}
+.backbar{margin:0 0 10px}
+.rres{font-weight:600;font-size:.85rem;color:var(--muted);margin-left:4px}
+.tsgrid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,320px),1fr));gap:14px;align-items:start}
