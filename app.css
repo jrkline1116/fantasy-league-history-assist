@@ -320,3 +320,6 @@ textarea.sharemsg{width:100%;padding:10px 12px;border:1.5px solid var(--line);bo
 td.sm{width:34px;padding-left:0!important;padding-right:6px!important}
 .smackbtn{background:none;border:1px solid var(--line);border-radius:6px;padding:1px 5px;font-size:.95rem;line-height:1.3;cursor:pointer}
 .smackbtn:hover{border-color:var(--brand);background:var(--surface2)}
+.card .who .mlink{font:inherit}
+.smackhint{font-size:.8em;opacity:.7}
+.card .who .smackbtn{font-size:.85rem;vertical-align:3px;margin-left:4px}

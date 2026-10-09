@@ -471,6 +471,20 @@
         ];
         return { to, from: me, flip: { ctx: "h2h", a: d.b, b: d.a }, lines, view: "h2h" };
       }
+      case "myGame": {
+        const m = S.stats.managerByKey[d.a], g = d.b === "high" ? m?.highGame : m?.bestWin;
+        if (!g) return null;
+        const op = g.op, mg = f1(g.my - g.their);
+        return { to: op, from: d.a, view: "teams", lines: d.b === "high" ? [
+          `Remember ${whenTxt(g)}, ${first(op)}? I hung ${f2(g.my)} on you. Still my best game ever.`,
+          `${f2(g.my)} points. On you. ${whenTxt(g)}. My personal record, your worst memory, ${first(op)}.`,
+          `${f1(g.my)}–${f1(g.their)}, ${whenTxt(g)}. Just thinking about it today, ${first(op)}.`,
+        ] : [
+          `${f1(g.my)}–${f1(g.their)} in ${whenTxt(g)}. A ${mg}-point beatdown, ${first(op)}. My biggest win ever came against you.`,
+          `Of all the people I've beaten, I beat you the worst, ${first(op)}. ${mg} points, ${whenTxt(g)}.`,
+          `Mercy rule should've kicked in, ${first(op)}. ${f1(g.my)}–${f1(g.their)}, ${whenTxt(g)}.`,
+        ] };
+      }
       case "high": { const x = R.highScores[d.i]; return x && { to: x.op, from: x.me, lines: [
         `Remember ${whenTxt(x)}, ${first(x.op)}? I hung ${f2(x.my)} on you. It's ${nthBest(d.i) === "the best" ? "the highest score" : nthBest(d.i) + " highest score"} in league history.`,
         `${f2(x.my)} points. On you. ${whenTxt(x)}. Framed forever in the record book, ${first(x.op)}.`,
@@ -760,9 +774,11 @@
     if (!S.selMgr || !st.managerByKey[S.selMgr]) S.selMgr = list[0]?.key;
     const m = st.managerByKey[S.selMgr]; if (!m) return "";
     const r = st.rivals(m.key);
-    const opp = (x, lab, d) => x ? card(lab, esc(name(x.op)), d(x)) : "";
-    const gameCard = (lab, g, cls) => g ? card(lab, `<span class="num">${f2(g.my)}</span>`, `${when(g)} vs ${esc(name(g.op))} (${g.my > g.their ? "W" : g.my < g.their ? "L" : "T"} ${f1(g.my)}–${f1(g.their)})`, cls) : "";
-    const marginCard = (lab, g) => g ? card(lab, `<span class="num">${f2(Math.abs(g.my - g.their))}</span>`, `${f1(g.my)}–${f1(g.their)} vs ${esc(name(g.op))}, ${when(g)}`) : "";
+    // tapping a rival's name opens Talk smack for that head-to-head
+    const opp = (x, lab, d) => x ? card(lab, `<button class="mlink" data-act="smack" data-ctx="h2h" data-a="${esc(m.key)}" data-b="${esc(x.op)}" title="Talk smack to ${esc(name(x.op))}">${esc(name(x.op))}</button> <span class="smackhint" aria-hidden="true">🗣</span>`, d(x)) : "";
+    const smk = (kind, g) => g ? ` <button class="smackbtn" data-act="smack" data-ctx="myGame" data-a="${esc(m.key)}" data-b="${kind}" title="Talk smack to ${esc(name(g.op))}" aria-label="Talk smack to ${esc(name(g.op))}">🗣</button>` : "";
+    const gameCard = (lab, g, cls, kind) => g ? card(lab, `<span class="num">${f2(g.my)}</span>${kind ? smk(kind, g) : ""}`, `${when(g)} vs ${esc(name(g.op))} (${g.my > g.their ? "W" : g.my < g.their ? "L" : "T"} ${f1(g.my)}–${f1(g.their)})`, cls) : "";
+    const marginCard = (lab, g, kind) => g ? card(lab, `<span class="num">${f2(Math.abs(g.my - g.their))}</span>${kind ? smk(kind, g) : ""}`, `${f1(g.my)}–${f1(g.their)} vs ${esc(name(g.op))}, ${when(g)}`) : "";
     const streakCard = (lab, x) => x ? card(lab, `${x.len} game${x.len === 1 ? "" : "s"}`, `${when(x.from)} to ${when(x.to)}`) : "";
     const result = (l) => !l.complete ? `<span class="muted">In progress</span>` : l.champ ? `<span class="trophy">🏆 Champion</span>` : l.runnerUp ? "Runner-up" : l.playoffs ? "Playoffs" : "";
     return `<div class="chips" role="group" aria-label="Pick a team">${list.map((x) => `<button class="chip" aria-pressed="${x.key === m.key}" data-act="selMgr" data-k="${esc(x.key)}">${esc(x.name)}</button>`).join("")}</div>
@@ -782,15 +798,16 @@
 
       <h2>Personal records</h2>
       <div class="cards">
-        ${gameCard("Highest score", m.highGame, "gold")}
+        ${gameCard("Highest score", m.highGame, "gold", "high")}
         ${gameCard("Lowest score", m.lowGame)}
-        ${marginCard("Biggest win", m.bestWin)}
+        ${marginCard("Biggest win", m.bestWin, "win")}
         ${marginCard("Worst loss", m.worstLoss)}
         ${streakCard("Longest winning streak", m.winStreak)}
         ${streakCard("Longest losing streak", m.lossStreak)}
       </div>
 
       <h2>Rivals</h2>
+      <p class="sub" style="margin-top:-4px">Tap a name to talk smack.</p>
       <div class="cards">
         ${opp(r.mostBeaten, "Most wins against", (x) => `${x.w} wins (${rec(x.w, x.l, x.t)} overall)`)}
         ${opp(r.mostLostTo, "Most losses to", (x) => `${x.l} losses (${rec(x.w, x.l, x.t)} overall)`)}
