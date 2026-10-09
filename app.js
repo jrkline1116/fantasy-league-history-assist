@@ -357,7 +357,8 @@
     const games = st.seasons.reduce((a, s) => a + s.rows.reduce((b, r) => b + r.g, 0) / 2, 0);
     const champs = new Set(done.map((s) => s.champion).filter(Boolean));
     const best = (arr, f, dir = -1) => [...arr].filter((m) => f(m) != null).sort((a, b) => dir * (f(a) - f(b)))[0];
-    const eligible = M.filter((m) => m.completeSeasons >= Math.min(2, done.length));
+    const minS = Math.max(1, Math.ceil(done.length / 2)); // at least half the league's finished seasons
+    const eligible = M.filter((m) => m.completeSeasons >= minS);
     const cards = [
       ["Most titles", best(M, (m) => m.titles || null), (m) => `${m.titles} title${m.titles === 1 ? "" : "s"} (${m.titleYears.join(", ")})`, true],
       ["Best average finish", best(eligible, (m) => m.avgFinish, 1), (m) => `${f2(m.avgFinish)} over ${m.finishes.length} seasons`],
@@ -391,7 +392,7 @@
         }).join("")}</tbody></table></div>
       <h2>League superlatives</h2>
       <div class="cards">${cards.map(([k, m, d, gold]) => `<div class="card${gold ? " gold" : ""}"><div class="k">${k}</div><div class="who">${esc(m.name)}</div><div class="d">${esc(d(m))}</div></div>`).join("")}</div>
-      <p class="sub" style="margin-top:10px">Averages and superlatives count managers with at least ${Math.min(2, done.length)} finished season${Math.min(2, done.length) === 1 ? "" : "s"}, except titles and last places.</p>`;
+      <p class="sub" style="margin-top:10px">Averages and superlatives count managers who played at least half the league's finished seasons (${minS} of ${done.length}), except titles and last places.</p>`;
   }
 
   function vStandings() {
