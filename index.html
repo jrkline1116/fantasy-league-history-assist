@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Fantasy League History Assist · Your league's all-time records</title>
+<meta name="theme-color" content="#15202B">
+<meta name="description" content="Free all-time history for your fantasy football league: average finish, points for and against, championships, head-to-head records, who you beat most and who owns you. Works with Sleeper and ESPN, including private ESPN leagues.">
+<link rel="canonical" href="https://fantasyleaguehistoryassist.com/">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://fantasyleaguehistoryassist.com/">
+<meta property="og:title" content="Fantasy League History Assist · Settle Every Argument">
+<meta property="og:description" content="Your fantasy league's whole history: all-time standings, average finish, head-to-head records, and the league record book. Sleeper and ESPN.">
+<link rel="icon" type="image/svg+xml" href="icons/logo.svg">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@600;700&family=Barlow:wght@400;500;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+<header>
+  <div class="wrap">
+    <div class="titlebar">
+      <a class="brandmark" href="./" data-act="home" aria-label="Fantasy League History Assist home">
+        <svg width="30" height="30" viewBox="0 0 32 32" aria-hidden="true"><rect width="32" height="32" rx="7" fill="#1F4E8C"/><path d="M10 7h12v3a6 6 0 0 1-12 0z M8 8h2v3a2 2 0 0 1-2-2zM24 8h-2v3a2 2 0 0 0 2-2z" fill="#E7B84B"/><rect x="14.5" y="16" width="3" height="5" fill="#E7B84B"/><rect x="11" y="21" width="10" height="3" rx="1" fill="#E7B84B"/></svg>
+        <h1>Fantasy League History Assist</h1>
+      </a>
+      <div class="hdr-actions" id="hdrActions"></div>
+    </div>
+    <nav class="tabs" id="tabs" role="tablist" aria-label="Sections"></nav>
+  </div>
+</header>
+
+<main class="wrap" id="main"></main>
+
+<footer>
+  <div class="wrap">
+    <span>Free and unofficial. Not affiliated with ESPN or Sleeper. ESPN cookies are used only to read your league and are never saved on our server.</span>
+    <span>
+      <a href="https://fantasyinjuryassist.com/">Fantasy Injury Assist</a> ·
+      <a href="https://fantasydefenseassist.com/">Fantasy Defense Assist</a> ·
+      <a id="bmc" href="https://buymeacoffee.com/jrkline1116" target="_blank" rel="noopener">Buy me a coffee</a>
+    </span>
+  </div>
+</footer>
+
+<dialog id="dlg"><div id="dlgBody"></div></dialog>
+
+<script src="config.js"></script>
+<script src="supabase/functions/_shared/flh-stats.js"></script>
+<script src="supabase/functions/_shared/flh-data.js"></script>
+<script src="demo.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
