@@ -54,8 +54,8 @@
   const HOSTS = ["https://lm-api-reads.fantasy.espn.com", "https://fantasy.espn.com"];
   const VIEWS = "view=mTeam&view=mSettings&view=mMatchupScore&view=mStandings&view=mStatus";
 
-  async function espnGet(path, creds) {
-    const headers = { accept: "application/json", "user-agent": "FantasyLeagueHistoryAssist/1.0" };
+  async function espnGet(path, creds, extraHeaders = null) {
+    const headers = { accept: "application/json", "user-agent": "FantasyLeagueHistoryAssist/1.0", ...(extraHeaders || {}) };
     if (creds?.espn_s2) headers.cookie = `espn_s2=${creds.espn_s2}; SWID=${creds.swid}`;
     const tried = [];
     for (const host of HOSTS) {
@@ -80,13 +80,13 @@
   }
 
   // 2018 and later live under /seasons/{year}; older years only under /leagueHistory
-  async function espnSeason(id, year, creds) {
+  async function espnSeason(id, year, creds, views = VIEWS) {
     if (year >= 2018) {
-      try { return await espnGet(`/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${id}?${VIEWS}`, creds); }
+      try { return await espnGet(`/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${id}?${views}`, creds); }
       catch (e) { if (!(e instanceof NotFoundError)) throw e; }
     }
     try {
-      const arr = await espnGet(`/apis/v3/games/ffl/leagueHistory/${id}?seasonId=${year}&${VIEWS}`, creds);
+      const arr = await espnGet(`/apis/v3/games/ffl/leagueHistory/${id}?seasonId=${year}&${views}`, creds);
       return Array.isArray(arr) ? (arr[0] ?? null) : arr;
     } catch (e) { if (e instanceof NotFoundError) return null; throw e; }
   }
@@ -168,7 +168,7 @@
 
   /* ---------------- public API ---------------- */
   // A brand-new league. Returns { platform, extId, extIds, isPrivate, leagueName, seasons }.
-  async function loadNew(platform, input, credsIn) {
+  async function loadNew(platform, input, credsIn, opts = {}) {
     if (platform === "sleeper") {
       const id = parseSleeperId(input);
       if (!id) throw new UserError("That doesn't look like a Sleeper league ID.");
@@ -176,7 +176,7 @@
       let rec = { platform, extId: L.id, extIds: L.ids || [L.id], isPrivate: false, leagueName: L.leagueName, seasons: L.seasons };
       // someone pasted an older season's ID: walk forward to the current league too
       const newest = Math.max(...L.seasons.map((s) => s.year));
-      if (newest < currentSeason()) { try { rec = await loadUpdate(rec, null); } catch { /* keep what we have */ } }
+      if (newest < currentSeason()) { try { rec = await loadUpdate(rec, null, opts); } catch { /* keep what we have */ } }
       return rec;
     }
     if (platform === "espn") {
@@ -195,9 +195,14 @@
     throw new UserError("Unknown platform.");
   }
 
+  // Drafts, rosters and moves for seasons just fetched (flh-moves.js). Older seasons are
+  // filled in a few at a time by the function's "moves" action.
+  const withMoves = async (rec, seasons, creds, opts) =>
+    (root.FLHMoves && seasons.length ? root.FLHMoves.fill(rec, seasons, creds, opts) : seasons);
+
   // Bring a saved league up to date. Finished seasons are never fetched again.
   // Throws PrivateError if a private ESPN league needs a (fresh) login.
-  async function loadUpdate(rec, credsIn) {
+  async function loadUpdate(rec, credsIn, opts = {}) {
     const since = doneThrough(rec.seasons);
     if (rec.platform === "sleeper") {
       const lastTeams = rec.seasons[rec.seasons.length - 1]?.teams || [];
@@ -209,7 +214,7 @@
         ...rec, extId: fresh.id,
         extIds: [...new Set([...(rec.extIds || []), ...(fresh.ids || []), fresh.id])],
         leagueName: fresh.seasons.length ? fresh.leagueName : rec.leagueName,
-        seasons: mergeSeasons(rec.seasons, fresh.seasons),
+        seasons: mergeSeasons(rec.seasons, await withMoves(rec, fresh.seasons, null, opts)),
       };
     }
     const creds = cleanCreds(credsIn);
@@ -230,7 +235,7 @@
         seasons = await espnHistory(rec.extId, creds, since); isPrivate = true;
       }
     }
-    let merged = mergeSeasons(rec.seasons, seasons), peopleDone = rec.peopleDone || null;
+    let merged = mergeSeasons(rec.seasons, await withMoves({ ...rec, isPrivate }, seasons, creds, opts)), peopleDone = rec.peopleDone || null;
     // Leagues saved before real names were kept: fetch everyone's names once (needs a login to get them)
     if (peopleDone !== "login" && (creds || !peopleDone)) {
       try {
@@ -249,7 +254,7 @@
   // Does this saved league still have games left to fetch?
   const hasLive = (seasons) => seasons.some((s) => !s.complete);
 
-  const api = { loadNew, loadUpdate, doneThrough, mergeSeasons, hasLive, parseEspnId, parseSleeperId, currentSeason, PrivateError, UserError };
+  const api = { loadNew, loadUpdate, doneThrough, mergeSeasons, hasLive, parseEspnId, parseSleeperId, currentSeason, cleanCreds, espnGet, espnSeason, PrivateError, NotFoundError, UserError };
   root.FLHCore = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

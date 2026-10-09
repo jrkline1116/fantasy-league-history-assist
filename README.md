@@ -1,6 +1,6 @@
 # Fantasy League History Assist
 
-All-time history for a fantasy football league: average finish, points for and against, titles, playoff trips, head-to-head records (who you beat most, who you lose to most), all-play luck, and a record book. Sleeper and ESPN (public and private).
+All-time history for a fantasy football league: average finish, points for and against, titles, playoff trips, head-to-head records (who you beat most, who you lose to most), all-play luck, a record book, every draft, final rosters, trades, and waiver/free-agent pickups. Sleeper and ESPN (public and private).
 
 Website: https://fantasyleaguehistoryassist.com/ (once the domain is pointed here)
 
@@ -20,6 +20,15 @@ Website: https://fantasyleaguehistoryassist.com/ (once the domain is pointed her
 - A private league's share code is only handed out after ESPN accepts the visitor's login for that league. Typing a private league's ID without a working login gets nothing.
 - Anyone with the share link can view that league's history (manager names, team names, scores). That's the point of sharing it.
 
+**Drafts, rosters, trades and pickups**
+- **Drafts** tab: the draft board for every season (or each manager's picks, or the price list for auctions), every manager's first-round picks by year, draft habits (first pick's position, average round of their first QB, keepers, how many picks were still on the roster at season's end), and "Can't quit him" (same manager drafting the same player in different seasons).
+- **Trades & Waivers** tab: filter by season and manager. Who works the wire (trades, adds, drops, waiver claims, FAAB spent, biggest bid, favorite trade partner), most frequent trade partners, every trade, every pickup, biggest FAAB bids, most-added players.
+- **Seasons** tab: final rosters (or current rosters for the season in progress), starters first, with how each player got there (drafted, keeper, trade, waivers, free agent).
+- **Teams** page: trades, pickups, latest trade and first-round picks for that manager.
+- Sleeper has all of it for every season. ESPN has drafts and final rosters for every season, but move-by-move trades and pickups only from 2019 on; before that the counts use ESPN's season totals (marked with *).
+- Leagues saved before this get their older seasons filled in a few at a time the first time someone opens the link (the page loads them automatically). Private ESPN leagues fill in the next time a member taps **Update this season** with their login.
+- Player names come from Sleeper's player list (also used to name ESPN players), kept in the `flha_cache` table and refreshed once a day.
+
 **Manager names**
 - Private ESPN leagues show real names as "First L." (ESPN only sends real names to a signed-in member). Leagues loaded before this get everyone's names the next time a member updates with their login. Sleeper and public ESPN leagues show usernames.
 - **Managers ✎** renames people and merges two accounts into one person ("same person as"). Changes are saved on the server and show for everyone with the link.
@@ -33,11 +42,13 @@ demo.js                             made-up demo league (#demo)
 config.js                           Supabase URL + publishable key (safe to publish)
 supabase/setup.sql                  the one database table (run once)
 supabase/update-shared-names.sql    adds shared names to a table made before Oct 2026 (run once)
+supabase/update-moves.sql           adds the player-name cache table (run once, Oct 2026)
 supabase/functions/league-history/  the one backend function
 supabase/functions/_shared/
   flh-stats.js   stats engine (used by the site)
   flh-data.js    Sleeper loader + Sleeper/ESPN normalizers (site + server)
   flh-core.js    server-side loading/updating (ESPN fetch, merge)
+  flh-moves.js   drafts, final rosters, trades and pickups (server only)
 ```
 
 The site loads `flh-stats.js` and `flh-data.js` straight from the `_shared` folder, so there's one copy shared by the site and the server.
@@ -50,7 +61,7 @@ Everything goes in the **same Supabase project as Fantasy Injury Assist** (`idwp
 
 Supabase → **SQL Editor** → **New query** → paste all of `supabase/setup.sql` → **Run**.
 
-If the table already existed before shared names were added, also run `supabase/update-shared-names.sql` the same way.
+If the table already existed before shared names were added, also run `supabase/update-shared-names.sql` the same way. If it existed before drafts and trades were added, run `supabase/update-moves.sql` too.
 
 ### 2. Deploy the function
 
@@ -103,7 +114,9 @@ select platform, is_private, count(*) from flha_leagues group by 1, 2;
 - **Head-to-head / Teams page rivals:** regular season plus winners-bracket playoff games (toggle on the Head-to-Head tab). Consolation games are left out everywhere.
 - **All-play %:** your record if you'd played every team every week. **Luck** = win % minus all-play %.
 - **Streaks** run across seasons.
+- **Still on roster at season end:** share of a manager's draft picks on their final roster (finished seasons only).
+- **Adds / Drops / Waiver claims:** completed waiver and free-agent moves (failed claims aren't counted). Players received in trades aren't adds.
 
 ## Later
 
-- Rivalry card images for the group chat, banner ads, Yahoo.
+- Draft grades from player points, trade winners (points after the trade), rivalry card images for the group chat, banner ads, Yahoo.

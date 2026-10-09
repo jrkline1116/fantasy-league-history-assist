@@ -247,3 +247,46 @@ table.compact tr.clickable:hover td:first-child { background: var(--surface2); }
 .fbox.cp { background: var(--surface2); border-color: var(--muted); color: var(--ink); }
 .fbox.cl { border-style: dashed; color: var(--loss); }
 .fbox.none { border-color: transparent; }
+
+/* ---------- drafts, rosters, trades and pickups ---------- */
+:root{ --p-qb:#E7EEFB; --p-rb:#E4F4EA; --p-wr:#FBEFE0; --p-te:#F3E8F7; --p-k:#EEF0F3; --p-dst:#E9EDF0; }
+@media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){ --p-qb:#1C2B44; --p-rb:#183427; --p-wr:#3A2C17; --p-te:#2F2238; --p-k:#222C36; --p-dst:#1F2830; } }
+:root[data-theme="dark"]{ --p-qb:#1C2B44; --p-rb:#183427; --p-wr:#3A2C17; --p-te:#2F2238; --p-k:#222C36; --p-dst:#1F2830; }
+.clickable{cursor:pointer}
+.ppos{display:inline-block;min-width:26px;text-align:center;font:700 .66rem/1.5 var(--body);letter-spacing:.03em;border:1px solid var(--line);border-radius:4px;padding:0 4px;color:var(--ink);vertical-align:1px}
+.ppos.qb{background:var(--p-qb)} .ppos.rb{background:var(--p-rb)} .ppos.wr{background:var(--p-wr)} .ppos.te{background:var(--p-te)} .ppos.k{background:var(--p-k)} .ppos.dst{background:var(--p-dst)}
+.pl{white-space:nowrap}
+.tg .pl,.glog .pl{display:inline-block;margin:0 10px 2px 0}
+
+table.board{font-size:.82rem;table-layout:fixed}
+table.board th,table.board td{white-space:normal;text-align:left;vertical-align:top;padding:6px 7px}
+table.board thead th{min-width:112px;font-size:.72rem}
+table.board th.rnd{width:34px;min-width:34px;background:var(--surface2);position:sticky;left:0;z-index:1;text-align:center}
+table.board thead th:first-child{width:34px;min-width:34px;position:sticky;left:0;z-index:2}
+.dcell{border-left:1px solid var(--line)}
+.dcell .dn{display:block;font-weight:600;line-height:1.2}
+.dcell .dm{display:block;color:var(--muted);font-size:.72rem}
+.dcell .dt{display:block;font-size:.72rem;font-style:italic}
+.dcell.qb{background:var(--p-qb)} .dcell.rb{background:var(--p-rb)} .dcell.wr{background:var(--p-wr)} .dcell.te{background:var(--p-te)} .dcell.k{background:var(--p-k)} .dcell.dst{background:var(--p-dst)}
+table.firsts td{white-space:normal;min-width:120px;vertical-align:top}
+
+.rgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,240px),1fr));gap:10px}
+.rcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.rhead{padding:9px 12px;background:var(--surface2);border-bottom:1px solid var(--line)}
+.rhead .tn{display:block;font-size:.8rem;color:var(--muted)}
+.plist{list-style:none;margin:0;padding:6px 12px 8px;font-size:.88rem}
+ol.plist li,ul.plist li{display:flex;gap:6px;align-items:baseline;padding:2px 0}
+.plist li.bench{color:var(--muted)}
+.plist li.bench:first-of-type,.plist li:not(.bench) + li.bench{border-top:1px dashed var(--line);margin-top:4px;padding-top:6px}
+.plist .rk{color:var(--muted);font-size:.78rem;min-width:34px}
+.plist .how{margin-left:auto;font:700 .7rem var(--body);color:var(--muted)}
+.rfoot{padding:6px 12px 9px;border-top:1px solid var(--line);font-size:.78rem;color:var(--muted)}
+
+.tgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,320px),1fr));gap:10px}
+.tcard{background:var(--surface);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.tcard .th{padding:7px 12px;font:700 .76rem/1.2 var(--body);letter-spacing:.05em;text-transform:uppercase;color:var(--muted);background:var(--surface2);border-bottom:1px solid var(--line)}
+.tside{padding:8px 12px;font-size:.9rem}
+.tside + .tside{border-top:1px dashed var(--line)}
+.tside .tw{margin-bottom:3px}
+.spin.inline{display:inline-block;width:14px;height:14px;border-width:2px;vertical-align:-2px;margin-right:6px}
+@media print{ .dcell,.ppos{background:none!important} .tcard,.rcard{break-inside:avoid} }

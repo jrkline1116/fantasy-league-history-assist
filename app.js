@@ -1,6 +1,6 @@
 // Fantasy League History Assist: the site.
-// Loads a league's whole history (Sleeper in the browser, ESPN through the espn-history
-// function), runs stats.js over it, and renders the tabs. Manager renames/merges are shared on the server.
+// Opens a league saved by the league-history function, runs flh-stats.js over it, and renders
+// the tabs (including drafts, final rosters, trades and pickups). Manager renames/merges are shared on the server.
 (() => {
   "use strict";
   const CFG = window.FLH_CONFIG || {};
@@ -51,12 +51,16 @@
     minSeasons: null,                       // Overview slider (null = half the league's finished seasons)
     ptsMode: "game",
     selMgr: null, openOpp: null, selYear: null, selWeek: null,
+    dYear: null, dView: "board",                  // Drafts tab
+    mvYear: "all", mvMgr: "", mvAll: false,       // Trades & Waivers tab
+    movesBusy: false,                             // fetching older seasons' drafts and moves
     espnCreds: {},      // this visit only, unless "remember" is ticked (then this browser only)
     pendingEspn: null,
     showShare: false,
     busy: false,
   };
   const TABS = [["overview", "Overview"], ["standings", "All-Time Standings"], ["teams", "Teams"], ["h2h", "Head-to-Head"], ["records", "Record Book"], ["seasons", "Seasons"]];
+  const MOVE_TABS = [["drafts", "Drafts"], ["moves", "Trades & Waivers"]];
 
   /* ---------------- small UI helpers ---------------- */
   let toastT;
@@ -130,7 +134,7 @@
     if (!res.ok) { const e = new Error(body?.error || `Server error (${res.status})`); e.private = !!body?.private; throw e; }
     return body;
   }
-  const fromServer = (r) => ({ slug: r.slug, platform: r.platform, isPrivate: !!r.isPrivate, leagueName: r.leagueName, seasons: r.seasons, savedAt: Date.parse(r.updatedAt) || Date.now(), edits: r.edits || NO_EDITS });
+  const fromServer = (r) => ({ slug: r.slug, platform: r.platform, isPrivate: !!r.isPrivate, leagueName: r.leagueName, seasons: r.seasons, savedAt: Date.parse(r.updatedAt) || Date.now(), edits: r.edits || NO_EDITS, movesPending: r.movesPending || 0 });
   const sameEdits = (a, b) => JSON.stringify(a?.edits || NO_EDITS) === JSON.stringify(b?.edits || NO_EDITS);
 
   /* ---------------- loading ---------------- */
@@ -167,7 +171,8 @@
     try {
       const L = fromServer(await api("open", { slug }));
       if (!local) { saveLocal(L); openLeague(L); }
-      else if (L.savedAt !== local.savedAt || !sameEdits(L, local)) replaceLeague(L);
+      else if (L.savedAt !== local.savedAt || !sameEdits(L, local) || L.movesPending !== local.movesPending) replaceLeague(L);
+      fetchMoves();
     } catch (e) {
       if (!local) renderLanding({ notice: e.message });
     }
@@ -179,7 +184,7 @@
     try {
       const L = fromServer(await api("load", { platform, league, ...(creds || {}) }));
       keepCreds(L.slug, creds, opts.remember);
-      saveLocal(L); S.showShare = true; openLeague(L);
+      saveLocal(L); S.showShare = true; openLeague(L); fetchMoves();
     } catch (e) {
       if (platform === "sleeper") return renderLanding({ sleeperErr: e.message, sleeperVal: league });
       renderLanding({ espnErr: e.message, espnVal: league, espnPrivate: e.private, espnHadCreds: !!creds?.espn_s2, s2: creds?.espn_s2, sw: creds?.swid });
@@ -195,7 +200,7 @@
       const r = await api("refresh", { slug: L.slug, ...(cr || {}) });
       if (r.needLogin) { S.busy = false; render(); return askEspnLogin(); }
       keepCreds(L.slug, creds, remember);
-      S.busy = false; replaceLeague(fromServer(r)); toast("Up to date");
+      S.busy = false; replaceLeague(fromServer(r)); toast("Up to date"); fetchMoves();
     } catch (e) {
       S.busy = false; render();
       if (e.private) return askEspnLogin(e.message);
@@ -235,12 +240,14 @@
     S.league = L;
     S.prefs = { h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
     S.tab = "overview"; S.minSeasons = null; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
+    S.dYear = null; S.mvYear = "all"; S.mvMgr = ""; S.mvAll = false; S.trAll = false;
     recompute(); setHash(L); render();
     window.scrollTo(0, 0);
   }
   function recompute() {
     const ed = currentEdits(S.league.edits);
     S.stats = FLHStats.compute(S.league.seasons, { aliases: ed.aliases, names: ed.names, h2hPlayoffs: S.prefs.h2hPlayoffs });
+    S.canon = canonIn(ed.aliases);
   }
   const savePrefs = () => store.set(`flha:prefs:${leagueKey(S.league)}`, S.prefs);
 
@@ -355,12 +362,14 @@
   /* ---------------- league views ---------------- */
   function render() {
     if (!S.league) return renderLanding();
-    $("tabs").innerHTML = TABS.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${S.tab === k}" data-act="tab" data-tab="${k}">${l}</button>`).join("");
+    const tabs = hasMoveData() || S.league.movesPending ? [...TABS, ...MOVE_TABS] : TABS;
+    if (!tabs.some(([k]) => k === S.tab)) S.tab = "overview";
+    $("tabs").innerHTML = tabs.map(([k, l]) => `<button class="tab" role="tab" aria-selected="${S.tab === k}" data-act="tab" data-tab="${k}">${l}</button>`).join("");
     $("hdrActions").innerHTML = `
       ${S.league.platform !== "demo" ? `<button class="btn small" data-act="share" title="Share this league's link"><span>Share</span> 🔗</button>` : ""}
       <button class="btn ghost small" data-act="managers" title="Rename or merge managers"><span>Managers</span> ✎</button>
       <button class="btn ghost small" data-act="switch" title="Open another league"><span>Switch</span> ⇄</button>`;
-    const v = { overview: vOverview, standings: vStandings, teams: vTeams, h2h: vH2H, records: vRecords, seasons: vSeasons }[S.tab];
+    const v = { overview: vOverview, standings: vStandings, teams: vTeams, h2h: vH2H, records: vRecords, seasons: vSeasons, drafts: vDrafts, moves: vMoves }[S.tab];
     $("main").innerHTML = head() + v();
   }
 
@@ -374,7 +383,7 @@
       ${S.showShare && L.platform !== "demo" ? `<div class="sharebox"><div><b>Saved.</b> Send this link to your league. It opens right to this page on any phone or computer${L.isPrivate ? ", no ESPN login needed" : ""}.
         <div class="shareurl"><input type="text" id="shareUrl" readonly value="${esc(shareUrl(L))}" aria-label="Share link"><button class="btn small" data-act="share">${navigator.share ? "Share" : "Copy link"}</button></div></div>
         <button class="btn ghost small" data-act="hideShare" aria-label="Dismiss">✕</button></div>` : ""}
-      ${live && S.tab !== "records" ? `<p class="tipbox">The ${live.year} season is in progress. Its finished games count toward records, points, and head-to-head, but not toward finishes or titles until it's over.</p>` : ""}`;
+      ${live && !["records", "drafts"].includes(S.tab) ? `<p class="tipbox">The ${live.year} season is in progress. Its finished games count toward records, points, and head-to-head, but not toward finishes or titles until it's over.</p>` : ""}`;
   }
 
   function vOverview() {
@@ -559,6 +568,8 @@
         ${opp(r.worstPct, "Toughest matchup (3+ games)", (x) => `${rec(x.w, x.l, x.t)} · ${pct(x.pct)}`)}
       </div>
 
+      ${teamMovesSection(m)}
+
       <h2>Season by season</h2>
       <div class="scroll"><table>
         <thead><tr><th class="l">Year</th><th class="l">Team</th><th>Finish</th><th>Reg. season</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>High</th><th>Low</th><th class="l">Result</th></tr></thead>
@@ -685,8 +696,308 @@
         const rest = last && s.champion ? gs.filter((g) => !fin.includes(g)) : [];
         return `<h3 class="round">${last && s.champion ? "Championship" : roundName(r, i)}</h3><div class="mugrid">${fin.map((g) => matchup(g, tn)).join("")}</div>`
           + (rest.length ? `<h3 class="round">3rd place game</h3><div class="mugrid">${rest.map((g) => matchup(g, tn)).join("")}</div>` : "");
-      }).join("")}` : ""}`;
+      }).join("")}` : ""}
+
+      ${rosterSection(S.league.seasons.find((x) => x.year === s.year), s)}`;
   }
+
+  /* ---------------- drafts, rosters, trades and pickups ---------------- */
+  // Seasons carry these from the server (see flh-moves.js): pl, draft, rost, tx, tc, faab, mv.
+  // Their manager keys are the original accounts, so everything goes through S.canon (merges).
+  const ck = (k) => (S.canon ? S.canon(k) : k);
+  const POS_ORDER = { QB: 1, RB: 2, WR: 3, TE: 4, K: 6, "D/ST": 7 };
+  const pinfo = (s, id) => s.pl?.[id] || [`Player ${id}`, ""];
+  const posCls = (p) => ({ QB: "qb", RB: "rb", WR: "wr", TE: "te", K: "k", "D/ST": "dst" }[p] || "oth");
+  const ptag = (pos) => pos ? `<span class="ppos ${posCls(pos)}">${esc(pos)}</span>` : "";
+  const pchip = (s, id) => { const [n, pos] = pinfo(s, id); return `<span class="pl">${esc(n)} ${ptag(pos)}</span>`; };
+  const draftSeasons = () => S.league.seasons.filter((s) => s.draft?.picks?.length).sort((a, b) => b.year - a.year);
+  const moveSeasons = () => S.league.seasons.filter((s) => s.mv != null && s.mv !== -1).sort((a, b) => b.year - a.year);
+  const hasMoveData = () => S.league.seasons.some((s) => s.draft?.picks?.length || s.tx?.length || s.tc || s.rost);
+  const shortDate = (ms) => ms ? new Date(ms).toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "";
+  const wkLabel = (t) => t.w ? `Week ${t.w}` : "Preseason";
+  const pickLabel = (pk) => `${pk.y} round ${pk.r} pick${pk.o ? ` <span class="muted">(${esc(name(ck(pk.o)))}'s)</span>` : ""}`;
+
+  function movesNote() {
+    const L = S.league, n = L.movesPending || 0;
+    if (!n || isDemo()) return "";
+    if (S.movesBusy) return `<p class="tipbox"><span class="spin inline" aria-hidden="true"></span> Loading drafts, rosters and trades… ${n} season${n === 1 ? "" : "s"} to go. This only happens once.</p>`;
+    if (L.isPrivate && !savedCreds(L.slug)) return `<p class="tipbox">Drafts, rosters and trades for ${n} season${n === 1 ? "" : "s"} load the next time someone in the league taps <b>Update this season</b> with their ESPN login.</p>`;
+    return `<p class="tipbox">${n} season${n === 1 ? "" : "s"} of drafts and trades still to load. <button class="linkbtn" data-act="movesGo">Load them now</button></p>`;
+  }
+
+  // Keep fetching older seasons' drafts and moves, a few per request, until they're all in
+  async function fetchMoves() {
+    const L = S.league;
+    if (!L || isDemo() || S.movesBusy || !(L.movesPending > 0)) return;
+    const cr = savedCreds(L.slug);
+    if (L.isPrivate && !cr) return;
+    S.movesBusy = true; render();
+    let stuck = 0;
+    try {
+      for (let i = 0; i < 30 && S.league?.slug === L.slug; i++) {
+        const before = S.league.movesPending;
+        const r = await api("moves", { slug: L.slug, ...(cr || {}) });
+        if (r.needLogin) break;
+        const NL = fromServer(r);
+        S.movesBusy = NL.movesPending > 0;
+        replaceLeague(NL);
+        if (!NL.movesPending) break;
+        stuck = NL.movesPending >= before ? stuck + 1 : 0;
+        if (stuck >= 3) break;
+      }
+    } catch (e) {
+      if (!e.private) toast(`Couldn't load drafts and trades: ${e.message}`);
+    } finally {
+      S.movesBusy = false;
+      if (S.league?.slug === L.slug) render();
+    }
+  }
+
+  /* ----- Drafts tab ----- */
+  function vDrafts() {
+    const ds = draftSeasons();
+    if (!ds.length) return movesNote() + `<p class="sub">${S.league.movesPending ? "Drafts show up here once they've loaded." : "No drafts found for this league. ESPN and Sleeper only keep drafts the league ran on their site."}</p>`;
+    if (!ds.find((s) => s.year === S.dYear)) S.dYear = ds[0].year;
+    const s = ds.find((x) => x.year === S.dYear), d = s.draft;
+    const view = d.type === "auction" ? "auction" : S.dView;
+    return `${movesNote()}
+      <div class="chips" role="group" aria-label="Draft year">${ds.map((x) => `<button class="chip" aria-pressed="${x.year === s.year}" data-act="dYear" data-y="${x.year}">${x.year}</button>`).join("")}</div>
+      <div class="toolbar"><p class="sub" style="margin:0">${s.year} · ${d.type === "auction" ? "auction" : d.type === "linear" ? "linear draft" : "snake draft"} · ${d.picks.length} picks${d.picks.some((p) => p.kp) ? " · <b>K</b> = keeper" : ""}</p>
+        ${d.type === "auction" ? "" : `<div class="seg" role="group" aria-label="Draft view">${[["board", "Draft board"], ["team", "By manager"]].map(([k, l]) => `<button aria-pressed="${view === k}" data-act="dView" data-v="${k}">${l}</button>`).join("")}</div>`}</div>
+      ${view === "board" ? draftBoard(s) : view === "auction" ? auctionTable(s) : draftByTeam(s)}
+      <p class="sub" style="margin-top:8px">Positions: ${["QB", "RB", "WR", "TE", "K", "D/ST"].map(ptag).join(" ")} · Tap a manager for their team page.</p>
+      ${draftAllTime(ds)}`;
+  }
+
+  function draftBoard(s) {
+    const d = s.draft;
+    const N = d.teams || Math.max(...d.picks.filter((p) => p.r === 1).map((p) => p.s || 0), 1);
+    const slotOf = (p) => p.s || (() => { const rp = p.n - (p.r - 1) * N; return d.type === "snake" && p.r % 2 === 0 ? N + 1 - rp : rp; })();
+    const slots = [...new Set(d.picks.map(slotOf))].sort((a, b) => a - b);
+    const owner = Object.fromEntries(d.picks.filter((p) => p.r === 1).map((p) => [slotOf(p), p.k]));
+    const rounds = [...new Set(d.picks.map((p) => p.r))].sort((a, b) => a - b);
+    const at = {}; for (const p of d.picks) at[`${p.r}:${slotOf(p)}`] = p;
+    const cell = (p, slot) => {
+      if (!p) return `<td class="dcell empty"></td>`;
+      const [n, pos, tm] = pinfo(s, p.p), traded = owner[slot] && ck(p.k) !== ck(owner[slot]);
+      return `<td class="dcell ${posCls(pos)}"><span class="dn">${esc(n)}</span><span class="dm">${esc(pos)}${tm ? " · " + esc(tm) : ""} · #${p.n}${p.kp ? ` · <b>K</b>` : ""}</span>${traded ? `<span class="dt">→ ${esc(shortName(ck(p.k)))}</span>` : ""}</td>`;
+    };
+    return `<div class="scroll"><table class="board">
+      <thead><tr><th class="l">Rd</th>${slots.map((sl) => `<th class="l clickable" data-act="gotoRival" data-k="${esc(ck(owner[sl] || ""))}">${owner[sl] ? esc(shortName(ck(owner[sl]))) : `Slot ${sl}`}</th>`).join("")}</tr></thead>
+      <tbody>${rounds.map((r) => `<tr><th class="l rnd">${r}</th>${slots.map((sl) => cell(at[`${r}:${sl}`], sl)).join("")}</tr>`).join("")}</tbody></table></div>
+      <p class="sub" style="margin-top:6px">Columns are the round-1 draft order. "→ name" means that pick was traded and someone else made it.</p>`;
+  }
+
+  function draftByTeam(s) {
+    const by = {};
+    for (const p of s.draft.picks) (by[ck(p.k)] ||= []).push(p);
+    const keys = Object.keys(by).sort((a, b) => by[a][0].n - by[b][0].n);
+    return `<div class="rgrid">${keys.map((k) => `<div class="rcard"><div class="rhead clickable" data-act="gotoRival" data-k="${esc(k)}"><b>${esc(name(k))}</b></div>
+      <ol class="plist">${by[k].map((p) => { const [n, pos] = pinfo(s, p.p); return `<li><span class="rk num">${p.r}.${String(p.n - (p.r - 1) * (s.draft.teams || by[k].length)).padStart(2, "0")}</span> ${esc(n)} ${ptag(pos)}${p.kp ? ` <b>K</b>` : ""}</li>`; }).join("")}</ol></div>`).join("")}</div>`;
+  }
+
+  function auctionTable(s) {
+    const picks = [...s.draft.picks].sort((a, b) => (b.$ || 0) - (a.$ || 0) || a.n - b.n);
+    const spend = {};
+    for (const p of picks) { const k = ck(p.k); const x = (spend[k] ||= { k, $: 0, n: 0, top: p }); x.$ += p.$ || 0; x.n++; }
+    return `<h3 class="round">Spending by manager</h3>
+      <div class="scroll"><table><thead><tr><th class="l">Manager</th><th>Spent</th><th>Players</th><th class="l">Biggest buy</th></tr></thead>
+      <tbody>${Object.values(spend).sort((a, b) => b.$ - a.$).map((x) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(x.k)}"><td class="l mgr">${esc(name(x.k))}</td><td class="num">$${x.$}</td><td class="num">${x.n}</td><td class="l">${pchip(s, x.top.p)} $${x.top.$ || 0}</td></tr>`).join("")}</tbody></table></div>
+      <h3 class="round">Every player, most expensive first</h3>
+      <div class="scroll"><table><thead><tr><th>Price</th><th class="l">Player</th><th class="l">Manager</th><th>Nominated</th></tr></thead>
+      <tbody>${picks.map((p) => `<tr><td class="num"><b>$${p.$ || 0}</b></td><td class="l">${pchip(s, p.p)}${p.kp ? " <b>K</b>" : ""}</td><td class="l">${esc(name(ck(p.k)))}</td><td class="num muted">#${p.n}</td></tr>`).join("")}</tbody></table></div>`;
+  }
+
+  function draftAllTime(ds) {
+    const years = [...ds].map((s) => s.year).sort((a, b) => a - b);
+    const mg = {};
+    const M = (k) => (mg[k] ||= { k, drafts: new Set(), first: {}, firstPos: {}, picks: 0, kept: 0, onRoster: 0, rosterKnown: 0, qbRound: [], times: {} });
+    for (const s of ds) {
+      const firstOf = {};
+      for (const p of s.draft.picks) {
+        const k = ck(p.k); if (!k) continue;
+        const m = M(k); m.drafts.add(s.year); m.picks++;
+        if (p.kp) m.kept++;
+        const [, pos] = pinfo(s, p.p);
+        if (!firstOf[k]) { firstOf[k] = p; m.firstPos[pos || "?"] = (m.firstPos[pos || "?"] || 0) + 1; }
+        if (p.r === 1) (m.first[s.year] ||= []).push(p);
+        if (pos === "QB" && !m.qbRound.find((x) => x.y === s.year)) m.qbRound.push({ y: s.year, r: p.r });
+        if (s.rost && s.complete) { m.rosterKnown++; if ((s.rost[p.k] || []).some((x) => x.p === p.p)) m.onRoster++; }
+        const t = (m.times[p.p] ||= { p: p.p, s, years: [] }); t.years.push(s.year); t.s = s;
+      }
+    }
+    const list = Object.values(mg).sort((a, b) => name(a.k).localeCompare(name(b.k)));
+    const loyal = list.flatMap((m) => Object.values(m.times).filter((t) => t.years.length >= 2).map((t) => ({ m, ...t }))).sort((a, b) => b.years.length - a.years.length || b.years[b.years.length - 1] - a.years[a.years.length - 1]).slice(0, 10);
+    const posMix = (o) => Object.entries(o).sort((a, b) => b[1] - a[1]).map(([p, n]) => `${esc(p)} ${n}`).join(" · ");
+    const avg = (a) => a.length ? a.reduce((x, y) => x + y, 0) / a.length : null;
+    return `<h2>Every first-round pick</h2>
+      <div class="scroll"><table class="compact firsts"><thead><tr><th class="l">Manager</th>${years.map((y) => `<th class="l">${y}</th>`).join("")}</tr></thead>
+      <tbody>${list.map((m) => `<tr><td class="l mgr clickable" data-act="gotoRival" data-k="${esc(m.k)}">${esc(name(m.k))}</td>${years.map((y) => {
+        const ps = m.first[y]; const s = ds.find((x) => x.year === y);
+        return `<td class="l">${ps ? ps.map((p) => `${pchip(s, p.p)}${p.kp ? " <b>K</b>" : ""}`).join("<br>") : m.drafts.has(y) ? `<span class="muted">none</span>` : `<span class="muted">·</span>`}</td>`;
+      }).join("")}</tr>`).join("")}</tbody></table></div>
+      <h2>Draft habits</h2>
+      <div class="scroll"><table class="compact"><thead><tr><th class="l">Manager</th><th>Drafts</th><th class="l">First pick's position</th><th>First QB<br>(avg round)</th><th>Keepers</th><th>Still on roster<br>at season end</th></tr></thead>
+      <tbody>${list.map((m) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(m.k)}"><td class="l mgr">${esc(name(m.k))}</td><td class="num">${m.drafts.size}</td><td class="l">${posMix(m.firstPos)}</td>
+        <td class="num">${m.qbRound.length ? f1(avg(m.qbRound.map((x) => x.r))) : "—"}</td><td class="num ${m.kept ? "" : "muted"}">${m.kept}</td>
+        <td class="num">${m.rosterKnown ? `${Math.round((m.onRoster / m.rosterKnown) * 100)}%` : "—"}</td></tr>`).join("")}</tbody></table></div>
+      <p class="sub" style="margin-top:8px"><b>Still on roster</b> is the share of a manager's draft picks still on their team after the last game of the season (finished seasons only). Low means they churn their roster; high means they ride with their picks.</p>
+      ${loyal.length ? `<h2>Can't quit him</h2>
+      <p class="sub" style="margin-top:-4px">The same manager drafting the same player in different seasons.</p>
+      <div class="scroll"><table><thead><tr><th class="l">Manager</th><th class="l">Player</th><th>Times</th><th class="l">Years</th></tr></thead>
+      <tbody>${loyal.map((x) => `<tr><td class="l mgr">${esc(name(x.m.k))}</td><td class="l">${pchip(x.s, x.p)}</td><td class="num"><b>${x.years.length}</b></td><td class="l">${x.years.join(", ")}</td></tr>`).join("")}</tbody></table></div>` : ""}`;
+  }
+
+  /* ----- Trades & Waivers tab ----- */
+  // every move in the chosen seasons, with merged manager keys
+  function collectMoves(years) {
+    const trades = [], pickups = [], counts = {};
+    const C = (k) => (counts[k] ||= { k, trades: 0, adds: 0, drops: 0, waivers: 0, fas: 0, faab: 0, bigBid: null, partners: {}, est: false });
+    for (const s of S.league.seasons) {
+      if (!years.includes(s.year) || s.mv == null || s.mv === -1) continue;
+      const detail = (s.tx || []).length > 0;
+      for (const t of s.tx || []) {
+        if (t.t === "trade") {
+          const sides = t.sides.map((x) => ({ ...x, k: ck(x.k) }));
+          trades.push({ s, t, sides });
+          for (const a of sides) {
+            C(a.k).trades++;
+            for (const b of sides) if (b.k !== a.k) C(a.k).partners[b.k] = (C(a.k).partners[b.k] || 0) + 1;
+          }
+        } else {
+          const k = ck(t.k); if (!k) continue;
+          pickups.push({ s, t, k });
+          const c = C(k);
+          c.adds += t.add.length; c.drops += t.drop.length;
+          if (t.add.length) { if (t.t === "waiver") c.waivers++; else c.fas++; }
+          if (t.bid != null) { c.faab += t.bid; if (!c.bigBid || t.bid > c.bigBid.t.bid) c.bigBid = { s, t }; }
+        }
+      }
+      // ESPN before 2019: only season totals
+      if (!detail && s.tc) for (const [raw, [a, d, tr, spent]] of Object.entries(s.tc)) {
+        const c = C(ck(raw)); c.adds += a; c.drops += d; c.trades += tr; c.faab += spent || 0; c.est = true;
+      }
+    }
+    return { trades, pickups, counts };
+  }
+
+  function tradeCard({ s, t, sides }) {
+    return `<div class="tcard"><div class="th">${s.year} · ${wkLabel(t)}${t.at ? ` · ${shortDate(t.at)}` : ""}</div>
+      ${sides.map((x) => `<div class="tside"><div class="tw clickable" data-act="gotoRival" data-k="${esc(x.k)}"><b>${esc(name(x.k))}</b> got</div><div class="tg">${[
+        ...x.get.map((p) => pchip(s, p)), ...(x.picks || []).map((pk) => `<span class="pl">${pickLabel(pk)}</span>`),
+        ...(x.faab ? [`<span class="pl">$${x.faab} FAAB</span>`] : []),
+      ].join("") || `<span class="muted">nothing</span>`}</div></div>`).join("")}</div>`;
+  }
+
+  function vMoves() {
+    const ms = moveSeasons();
+    const yrs = ms.map((s) => s.year);
+    if (!ms.length) return movesNote() + `<p class="sub">${S.league.movesPending ? "Trades and pickups show up here once they've loaded." : "No trades or pickups found for this league."}</p>`;
+    if (S.mvYear !== "all" && !yrs.includes(S.mvYear)) S.mvYear = "all";
+    const years = S.mvYear === "all" ? yrs : [S.mvYear];
+    const { trades, pickups, counts } = collectMoves(years);
+    const mgrs = Object.keys(counts).sort((a, b) => name(a).localeCompare(name(b)));
+    if (S.mvMgr && !counts[S.mvMgr]) S.mvMgr = "";
+    const mine = (k) => !S.mvMgr || k === S.mvMgr;
+    const tr = trades.filter((x) => x.sides.some((y) => mine(y.k))).reverse();
+    const pu = pickups.filter((x) => mine(x.k)).reverse();
+    const anyFaab = pickups.some((x) => x.t.bid != null) || Object.values(counts).some((c) => c.faab);
+    const anyEst = Object.values(counts).some((c) => c.est);
+    const nAdds = pu.reduce((a, x) => a + x.t.add.length, 0);
+    const spent = pu.reduce((a, x) => a + (x.t.bid || 0), 0);
+    const shown = S.mvAll ? pu : pu.slice(0, 40);
+    const pairs = {};
+    for (const x of trades) for (let i = 0; i < x.sides.length; i++) for (let j = i + 1; j < x.sides.length; j++) {
+      const [a, b] = [x.sides[i].k, x.sides[j].k].sort(); const key = a + "|" + b; (pairs[key] ||= { a, b, n: 0 }).n++;
+    }
+    const topPairs = Object.values(pairs).sort((p, q) => q.n - p.n).slice(0, 6);
+    const added = {};
+    for (const x of pickups) for (const p of x.t.add) { const a = (added[p] ||= { p, s: x.s, n: 0, by: new Set() }); a.n++; a.by.add(x.k); a.s = x.s; }
+    const journeymen = Object.values(added).filter((a) => a.n >= 2).sort((a, b) => b.n - a.n || b.by.size - a.by.size).slice(0, 8);
+    const bids = pickups.filter((x) => x.t.bid).sort((a, b) => b.t.bid - a.t.bid).slice(0, 8);
+    const partner = (c) => { const e = Object.entries(c.partners).sort((a, b) => b[1] - a[1])[0]; return e ? `${esc(name(e[0]))} <span class="avg">(${e[1]})</span>` : `<span class="muted">—</span>`; };
+    const espnEarly = S.league.platform === "espn" && S.league.seasons.some((s) => s.year < 2019);
+
+    return `${movesNote()}
+      <div class="chips" role="group" aria-label="Seasons"><button class="chip" aria-pressed="${S.mvYear === "all"}" data-act="mvYear" data-y="all">All seasons</button>${yrs.map((y) => `<button class="chip" aria-pressed="${S.mvYear === y}" data-act="mvYear" data-y="${y}">${y}</button>`).join("")}</div>
+      <div class="toolbar"><label class="sr" for="mvMgr">Manager</label><select id="mvMgr" style="width:auto;min-width:200px"><option value="">Everyone</option>${mgrs.map((k) => `<option value="${esc(k)}" ${k === S.mvMgr ? "selected" : ""}>${esc(name(k))}</option>`).join("")}</select></div>
+      <div class="kpis">
+        <div class="kpi"><div class="v num">${tr.length}</div><div class="l">Trades</div></div>
+        <div class="kpi"><div class="v num">${nAdds}</div><div class="l">Players added off waivers or free agency</div></div>
+        <div class="kpi"><div class="v num">${pu.filter((x) => x.t.t === "waiver" && x.t.add.length).length}</div><div class="l">Waiver claims won</div></div>
+        ${anyFaab ? `<div class="kpi"><div class="v num">$${spent.toLocaleString()}</div><div class="l">FAAB spent on claims</div></div>` : ""}
+      </div>
+      ${S.mvMgr ? "" : `<h2>Who works the wire</h2>
+      <div class="scroll"><table class="compact"><thead><tr><th class="l">Manager</th><th>Trades</th><th>Adds</th><th>Drops</th><th>Waiver<br>claims</th>${anyFaab ? "<th>FAAB<br>spent</th><th class=\"l\">Biggest bid</th>" : ""}<th class="l">Favorite trade partner</th></tr></thead>
+      <tbody>${Object.values(counts).sort((a, b) => (b.adds + b.trades * 3) - (a.adds + a.trades * 3)).map((c) => `<tr class="clickable" data-act="mvPick" data-k="${esc(c.k)}"><td class="l mgr">${esc(name(c.k))}${c.est ? " *" : ""}</td>
+        <td class="num">${c.trades}</td><td class="num">${c.adds}</td><td class="num">${c.drops}</td><td class="num">${c.waivers}</td>
+        ${anyFaab ? `<td class="num">$${c.faab}</td><td class="l">${c.bigBid ? `$${c.bigBid.t.bid} · ${esc(pinfo(c.bigBid.s, c.bigBid.t.add[0])[0])} <span class="avg">(${c.bigBid.s.year})</span>` : `<span class="muted">—</span>`}</td>` : ""}
+        <td class="l">${partner(c)}</td></tr>`).join("")}</tbody></table></div>
+      <p class="sub" style="margin-top:8px">Tap a manager to see only their moves.${anyEst ? " * Includes ESPN's season totals for years before 2019, when ESPN didn't keep move-by-move history." : ""}${espnEarly && !anyEst ? " ESPN only keeps move-by-move history from 2019 on." : ""}</p>`}
+      ${!S.mvMgr && topPairs.length ? `<h2>Most frequent trade partners</h2><div class="cards">${topPairs.map((p) => card(`${p.n} trade${p.n === 1 ? "" : "s"}`, `${esc(name(p.a))} &amp; ${esc(name(p.b))}`, "")).join("")}</div>` : ""}
+      <h2>Trades${S.mvMgr ? ` · ${esc(name(S.mvMgr))}` : ""}</h2>
+      ${tr.length ? `<div class="tgrid">${(S.trAll ? tr : tr.slice(0, 12)).map(tradeCard).join("")}</div>${tr.length > 12 && !S.trAll ? `<div class="actions"><button class="btn ghost small" data-act="trAll">Show all ${tr.length} trades</button></div>` : ""}` : `<p class="sub">No trades${S.mvMgr ? " for this manager" : ""} in ${S.mvYear === "all" ? "these seasons" : S.mvYear}.</p>`}
+      <h2>Waiver and free-agent pickups${S.mvMgr ? ` · ${esc(name(S.mvMgr))}` : ""}</h2>
+      ${pu.length ? `<div class="scroll"><table><thead><tr><th class="l">When</th>${S.mvMgr ? "" : `<th class="l">Manager</th>`}<th class="l">Added</th><th class="l">Dropped</th><th class="l">How</th></tr></thead>
+      <tbody>${shown.map((x) => `<tr><td class="l">${x.s.year} · ${x.t.w ? "wk " + x.t.w : "pre"}<span class="tn">${shortDate(x.t.at)}</span></td>${S.mvMgr ? "" : `<td class="l mgr">${esc(name(x.k))}</td>`}
+        <td class="l">${x.t.add.map((p) => pchip(x.s, p)).join("<br>") || `<span class="muted">—</span>`}</td><td class="l muted">${x.t.drop.map((p) => esc(pinfo(x.s, p)[0])).join("<br>") || "—"}</td>
+        <td class="l">${x.t.t === "waiver" ? `Waivers${x.t.bid != null ? ` <b>$${x.t.bid}</b>` : ""}` : "Free agent"}</td></tr>`).join("")}</tbody></table></div>
+      ${pu.length > shown.length ? `<div class="actions"><button class="btn ghost small" data-act="mvAll">Show all ${pu.length}</button></div>` : ""}` : `<p class="sub">No pickups${S.mvMgr ? " for this manager" : ""} in ${S.mvYear === "all" ? "these seasons" : S.mvYear}.</p>`}
+      ${!S.mvMgr && (bids.length || journeymen.length) ? `<div class="recgrid" style="margin-top:20px">
+        ${bids.length ? `<div class="panel"><h3>Biggest FAAB bids</h3><div style="overflow-x:auto"><table><thead><tr><th class="l">Manager</th><th>Bid</th><th class="l">Player</th><th class="l">When</th></tr></thead><tbody>${bids.map((x) => `<tr><td class="l mgr">${esc(name(x.k))}</td><td class="num"><b>$${x.t.bid}</b></td><td class="l">${x.t.add.map((p) => pchip(x.s, p)).join(" ")}</td><td class="l">${x.s.year} wk ${x.t.w}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+        ${journeymen.length ? `<div class="panel"><h3>Most-added players</h3><div style="overflow-x:auto"><table><thead><tr><th class="l">Player</th><th>Times added</th><th>By</th></tr></thead><tbody>${journeymen.map((a) => `<tr><td class="l">${pchip(a.s, a.p)}</td><td class="num"><b>${a.n}</b></td><td class="num">${a.by.size} manager${a.by.size === 1 ? "" : "s"}</td></tr>`).join("")}</tbody></table></div></div>` : ""}
+      </div>` : ""}`;
+  }
+
+  /* ----- final rosters (Seasons tab) ----- */
+  function rosterSection(src, st) {
+    if (!src.rost || !Object.keys(src.rost).length) return "";
+    // how each player got there: the last move that brought him to this team, else the draft
+    const how = {};
+    for (const p of src.draft?.picks || []) how[`${p.k}|${p.p}`] = p.kp ? "K" : "D";
+    for (const t of src.tx || []) {
+      if (t.t === "trade") { for (const x of t.sides) for (const p of x.get) how[`${x.k}|${p}`] = "T"; }
+      else for (const p of t.add) how[`${t.k}|${p}`] = t.t === "waiver" ? "W" : "FA";
+    }
+    const anyHow = Object.keys(how).length > 0;
+    const slotRank = { s: 0, b: 1, t: 2, r: 3 };
+    const tn = Object.fromEntries(st.rows.map((r) => [r.key, r.teamName]));
+    const keys = Object.keys(src.rost).sort((a, b) => {
+      const ra = st.rows.find((r) => r.key === ck(a)), rb = st.rows.find((r) => r.key === ck(b));
+      return ((src.complete ? ra?.finalRank : ra?.regRank) ?? 99) - ((src.complete ? rb?.finalRank : rb?.regRank) ?? 99);
+    });
+    return `<h2>${src.complete ? "Final rosters" : "Rosters right now"}</h2>
+      <p class="sub" style="margin-top:-4px">${src.complete ? "Each team's roster after its last game of the season" : "Each team's roster today"}, starters first.${anyHow ? " How they got him: <b>D</b> drafted · <b>K</b> keeper · <b>T</b> trade · <b>W</b> waivers · <b>FA</b> free agent." : ""}</p>
+      <div class="rgrid">${keys.map((raw) => {
+        const k = ck(raw);
+        const list = [...src.rost[raw]].sort((a, b) => slotRank[a.s] - slotRank[b.s] || (POS_ORDER[pinfo(src, a.p)[1]] || 5) - (POS_ORDER[pinfo(src, b.p)[1]] || 5));
+        const tally = {}; for (const x of list) { const h = how[`${raw}|${x.p}`]; if (h) tally[h] = (tally[h] || 0) + 1; }
+        return `<div class="rcard"><div class="rhead clickable" data-act="gotoRival" data-k="${esc(k)}"><b>${esc(name(k))}</b><span class="tn">${esc(tn[k] || "")}</span></div>
+          <ul class="plist">${list.map((x) => { const [n, pos] = pinfo(src, x.p), h = how[`${raw}|${x.p}`];
+            return `<li class="${x.s === "s" ? "" : "bench"}">${ptag(pos)} ${esc(n)}${x.s === "r" ? ` <span class="tag">IR</span>` : x.s === "t" ? ` <span class="tag">Taxi</span>` : ""}${anyHow ? `<span class="how">${h || ""}</span>` : ""}</li>`; }).join("")}</ul>
+          ${anyHow ? `<div class="rfoot">${["D", "K", "T", "W", "FA"].filter((h) => tally[h]).map((h) => `${h} ${tally[h]}`).join(" · ")}</div>` : ""}</div>`;
+      }).join("")}</div>`;
+  }
+
+  /* ----- team page summary ----- */
+  function teamMovesSection(m) {
+    const ds = draftSeasons();
+    const firsts = ds.flatMap((s) => s.draft.picks.filter((p) => p.r === 1 && ck(p.k) === m.key).map((p) => ({ s, p }))).sort((a, b) => b.s.year - a.s.year);
+    const { trades, counts } = collectMoves(moveSeasons().map((s) => s.year));
+    const c = counts[m.key];
+    if (!firsts.length && !c) return "";
+    const top = c && Object.entries(c.partners).sort((a, b) => b[1] - a[1])[0];
+    const lastTrade = trades.filter((x) => x.sides.some((y) => y.k === m.key)).pop();
+    return `<h2>Drafts and moves</h2>
+      <div class="cards">
+        ${c ? card("Trades", `${c.trades}`, top ? `Most with ${esc(name(top[0]))} (${top[1]})` : "No trade partners yet") : ""}
+        ${c ? card("Pickups", `${c.adds}`, `${c.waivers} waiver claim${c.waivers === 1 ? "" : "s"}${c.faab ? ` · $${c.faab} FAAB spent` : ""}${c.est ? " · includes ESPN season totals" : ""}`) : ""}
+        ${lastTrade ? card("Latest trade", `${lastTrade.s.year} · ${wkLabel(lastTrade.t)}`, lastTrade.sides.map((x) => `${esc(name(x.k))} got ${x.get.map((p) => esc(pinfo(lastTrade.s, p)[0])).join(", ") || (x.picks.length ? "draft picks" : "nothing")}`).join(" · ")) : ""}
+      </div>
+      ${firsts.length ? `<h3 class="round">First-round picks</h3><div class="glog">${firsts.map(({ s, p }) => `<span><b>${s.year}</b> ${pchip(s, p.p)} <span class="muted">#${p.n}</span></span>`).join("")}</div>` : ""}
+      <div class="actions">${ds.length ? `<button class="btn ghost small" data-act="tab" data-tab="drafts">All drafts</button>` : ""}${c ? `<button class="btn ghost small" data-act="mvPick" data-k="${esc(m.key)}">All their trades and pickups</button>` : ""}</div>`;
+  }
+
 
   /* ---------------- managers (rename / merge, shared with everyone who has the link) ---------------- */
   const isDemo = () => S.league?.slug === "demo";
@@ -816,7 +1127,7 @@
           const y = window.scrollY; render(); return window.scrollTo(0, y);
         }
         case "ptsMode": S.ptsMode = a.dataset.m; if (/^p[fa]/.test(S.sort.key)) S.sort.key = "avgFinish"; return render();
-        case "gotoRival": S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
+        case "gotoRival": if (!a.dataset.k) return; S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
         case "gotoSeason": S.tab = "seasons"; S.selYear = Number(a.dataset.year); S.selWeek = null; render(); return window.scrollTo(0, 0);
         case "selMgr": S.selMgr = a.dataset.k; S.openOpp = null; return render();
         case "openOpp": S.openOpp = S.openOpp === a.dataset.k ? null : a.dataset.k; return render();
@@ -853,6 +1164,13 @@
           } catch (err) { a.disabled = false; a.textContent = "Undo back to here"; return toast(`Couldn't undo: ${err.message}`); }
         }
         case "openRecent": return openSlug(a.dataset.slug);
+        case "dYear": S.dYear = Number(a.dataset.y); return render();
+        case "dView": S.dView = a.dataset.v; return render();
+        case "mvYear": S.mvYear = a.dataset.y === "all" ? "all" : Number(a.dataset.y); S.mvAll = false; S.trAll = false; return render();
+        case "trAll": { const y = window.scrollY; S.trAll = true; render(); return window.scrollTo(0, y); }
+        case "mvAll": { const y = window.scrollY; S.mvAll = true; render(); return window.scrollTo(0, y); }
+        case "mvPick": S.tab = "moves"; S.mvMgr = a.dataset.k; S.mvAll = false; S.trAll = false; render(); return window.scrollTo(0, 0);
+        case "movesGo": return fetchMoves();
 
         /* Sleeper */
         case "sleeperGo": {
@@ -922,6 +1240,7 @@
     }
     // picking or removing an account in the Managers dialog redraws it so merged accounts show under their person
     if (e.target.matches?.("[data-merge-into]")) { syncMgrDraft(); return managersDlg(false); }
+    if (e.target.id === "mvMgr") { S.mvMgr = e.target.value; S.mvAll = false; S.trAll = false; render(); $("mvMgr")?.focus(); return; }
     if (e.target.id === "weekSel") { S.selWeek = Number(e.target.value); render(); $("weekSel")?.focus(); }
   });
   document.addEventListener("keydown", (e) => {

@@ -22,5 +22,13 @@ create index if not exists flha_leagues_ext_ids on public.flha_leagues using gin
 -- Only the league-history function (service role) touches it.
 alter table public.flha_leagues enable row level security;
 
+-- Sleeper's player list, refreshed daily (names for drafts, rosters, trades and pickups)
+create table if not exists public.flha_cache (
+  key         text primary key,
+  data        jsonb not null,
+  updated_at  timestamptz not null default now()
+);
+alter table public.flha_cache enable row level security;
+
 -- Handy: most-viewed leagues
 -- select name, platform, is_private, views, created_at, updated_at from public.flha_leagues order by views desc limit 50;

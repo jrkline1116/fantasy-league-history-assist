@@ -173,7 +173,7 @@
       } else finalRank = derived;
     }
     return {
-      year: Number(L.season), platform: "sleeper", leagueName: L.name, complete: !inProgress,
+      year: Number(L.season), platform: "sleeper", lid: String(L.league_id), leagueName: L.name, complete: !inProgress,
       playoffTeams: Number(st.playoff_teams || 0) || null,
       teams: teams.map(({ rid, ...t }) => t), games, regRank, finalRank,
       medianScoring: !!st.league_average_match,
