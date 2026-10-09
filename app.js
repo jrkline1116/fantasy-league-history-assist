@@ -1,6 +1,6 @@
 // Fantasy League History Assist: the site.
 // Loads a league's whole history (Sleeper in the browser, ESPN through the espn-history
-// function), runs stats.js over it, and renders the tabs. Everything is kept in this browser.
+// function), runs stats.js over it, and renders the tabs. Manager renames/merges are shared on the server.
 (() => {
   "use strict";
   const CFG = window.FLH_CONFIG || {};
@@ -17,13 +17,16 @@
   const signPct = (n) => n == null ? "—" : `<span class="${n > 0.005 ? "pos" : n < -0.005 ? "neg" : ""}">${n > 0 ? "+" : ""}${(n * 100).toFixed(1)}</span>`;
   const rec = (w, l, t) => `${w}-${l}${t ? "-" + t : ""}`;
   const ord = (n) => n == null ? "—" : n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
+  // a total with its per-game average: "1896.9 (145.9)"
+  const tot = (t, g, round) => t == null || isNaN(t) ? "—" : `${round ? Math.round(t).toLocaleString() : f1(t)}${g ? ` <span class="avg">(${f1(t / g)})</span>` : ""}`;
+  const NO_EDITS = { names: {}, aliases: {} };
   const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} hr ago` : `${Math.round(m / 1440)} days ago`; };
 
   const S = {
     league: null,       // { slug, platform, isPrivate, leagueName, seasons, savedAt }
     stats: null,
     tab: "overview",
-    prefs: { aliases: {}, names: {}, h2hPlayoffs: true },
+    prefs: { h2hPlayoffs: true },   // this browser only (old per-browser names/aliases may linger here)
     sort: { key: "avgFinish", asc: true },
     ptsMode: "game",
     selMgr: null, openOpp: null, selYear: null, selWeek: null,
@@ -106,7 +109,8 @@
     if (!res.ok) { const e = new Error(body?.error || `Server error (${res.status})`); e.private = !!body?.private; throw e; }
     return body;
   }
-  const fromServer = (r) => ({ slug: r.slug, platform: r.platform, isPrivate: !!r.isPrivate, leagueName: r.leagueName, seasons: r.seasons, savedAt: Date.parse(r.updatedAt) || Date.now() });
+  const fromServer = (r) => ({ slug: r.slug, platform: r.platform, isPrivate: !!r.isPrivate, leagueName: r.leagueName, seasons: r.seasons, savedAt: Date.parse(r.updatedAt) || Date.now(), edits: r.edits || NO_EDITS });
+  const sameEdits = (a, b) => JSON.stringify(a?.edits || NO_EDITS) === JSON.stringify(b?.edits || NO_EDITS);
 
   /* ---------------- loading ---------------- */
   function showLoading(msg) {
@@ -142,7 +146,7 @@
     try {
       const L = fromServer(await api("open", { slug }));
       if (!local) { saveLocal(L); openLeague(L); }
-      else if (L.savedAt !== local.savedAt) replaceLeague(L);
+      else if (L.savedAt !== local.savedAt || !sameEdits(L, local)) replaceLeague(L);
     } catch (e) {
       if (!local) renderLanding({ notice: e.message });
     }
@@ -208,13 +212,14 @@
 
   function openLeague(L) {
     S.league = L;
-    S.prefs = { aliases: {}, names: {}, h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
+    S.prefs = { h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
     S.tab = "overview"; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
     recompute(); setHash(L); render();
     window.scrollTo(0, 0);
   }
   function recompute() {
-    S.stats = FLHStats.compute(S.league.seasons, { aliases: S.prefs.aliases, names: S.prefs.names, h2hPlayoffs: S.prefs.h2hPlayoffs });
+    const ed = S.league.edits || NO_EDITS;
+    S.stats = FLHStats.compute(S.league.seasons, { aliases: ed.aliases, names: ed.names, h2hPlayoffs: S.prefs.h2hPlayoffs });
   }
   const savePrefs = () => store.set(`flha:prefs:${leagueKey(S.league)}`, S.prefs);
 
@@ -388,7 +393,7 @@
             ${s.complete ? cellM(t(s.champion), "").replace('class="l mgr"', 'class="l mgr trophy"') : `<td class="l muted">In progress</td>`}
             ${s.complete ? cellM(t(s.runnerUp)) : `<td class="l muted">—</td>`}
             ${cellM(reg1, reg1 ? ` · ${rec(reg1.w, reg1.l, reg1.t)}` : "")}
-            ${cellM(pts, pts ? ` · ${f1(pts.pf)}` : "")}</tr>`;
+            ${cellM(pts, pts ? ` · ${f1(pts.pf)} (${f1(pts.g ? pts.pf / pts.g : null)}/g)` : "")}</tr>`;
         }).join("")}</tbody></table></div>
       <h2>League superlatives</h2>
       <div class="cards">${cards.map(([k, m, d, gold]) => `<div class="card${gold ? " gold" : ""}"><div class="k">${k}</div><div class="who">${esc(m.name)}</div><div class="d">${esc(d(m))}</div></div>`).join("")}</div>
@@ -411,8 +416,8 @@
       ["bestFinish", "Best", "", (m) => `<td class="num">${ord(m.bestFinish)}</td>`],
       ["titles", "Titles", "", (m) => `<td class="num ${m.titles ? "trophy" : "muted"}">${m.titles ? "🏆 " + m.titles : "0"}</td>`],
       ["playoffs", "Playoffs", "", (m) => `<td class="num">${m.playoffs}/${m.completeSeasons}</td>`],
-      [P[0][0], P[0][1], "", (m) => `<td class="num">${pm === "total" ? Math.round(m[P[0][0]]).toLocaleString() : f1(m[P[0][0]])}</td>`],
-      [P[1][0], P[1][1], "", (m) => `<td class="num">${pm === "total" ? Math.round(m[P[1][0]]).toLocaleString() : f1(m[P[1][0]])}</td>`],
+      [P[0][0], P[0][1], "", (m) => `<td class="num">${pm === "total" ? tot(m.pf, m.games, true) : f1(m[P[0][0]])}</td>`],
+      [P[1][0], P[1][1], "", (m) => `<td class="num">${pm === "total" ? tot(m.pa, m.games, true) : f1(m[P[1][0]])}</td>`],
       ["highScore", "High game", "", (m) => `<td class="num" title="${m.highGame ? esc(when(m.highGame)) : ""}">${f1(m.highGame?.my)}</td>`],
       ["lowScore", "Low game", "", (m) => `<td class="num" title="${m.lowGame ? esc(when(m.lowGame)) : ""}">${f1(m.lowGame?.my)}</td>`],
       ["allPlayPct", "All-play %", "", (m) => `<td class="num">${pct(m.allPlayPct)}</td>`],
@@ -494,10 +499,10 @@
 
       <h2>Season by season</h2>
       <div class="scroll"><table>
-        <thead><tr><th class="l">Year</th><th class="l">Team</th><th>Finish</th><th>Reg. season</th><th>W-L-T</th><th>PF</th><th>PA</th><th>High</th><th>Low</th><th class="l">Result</th></tr></thead>
+        <thead><tr><th class="l">Year</th><th class="l">Team</th><th>Finish</th><th>Reg. season</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>High</th><th>Low</th><th class="l">Result</th></tr></thead>
         <tbody>${m.lines.map((l) => `<tr class="clickable" data-act="gotoSeason" data-year="${l.year}"><td class="l"><b>${l.year}</b></td><td class="l">${esc(l.teamName)}</td>
           <td class="num">${l.complete ? `${ord(l.finalRank)} <span class="muted">of ${l.teamCount}</span>` : "—"}</td><td class="num">${ord(l.regRank)}</td><td class="num">${rec(l.w, l.l, l.t)}</td>
-          <td class="num">${f1(l.pf)}</td><td class="num">${f1(l.pa)}</td><td class="num">${f1(l.high)}</td><td class="num">${f1(l.low)}</td><td class="l">${result(l)}</td></tr>`).join("")}</tbody></table></div>
+          <td class="num">${tot(l.pf, l.g)}</td><td class="num">${tot(l.pa, l.g)}</td><td class="num">${f1(l.high)}</td><td class="num">${f1(l.low)}</td><td class="l">${result(l)}</td></tr>`).join("")}</tbody></table></div>
       <p class="sub" style="margin-top:8px">W-L, PF and PA are regular season. High and low include playoff games. Tap a year to open that season.</p>
 
       <h2>Against every opponent</h2>
@@ -554,7 +559,7 @@
       ${panel("Longest losing streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th>`,
         five(R.lossStreaks).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
       ${panel("Best regular seasons", `<th class="l">Manager</th><th>Record</th><th>Year</th><th>PF</th>`,
-        five(R.bestSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${f1(x.pf)}</td></tr>`).join(""))}
+        five(R.bestSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${tot(x.pf, x.g)}</td></tr>`).join(""))}
       ${panel("Highest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
         five(R.mostPointsSeasons).map((x) => `<tr><td class="l mgr">${esc(name(x.key))}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
       ${panel("Lowest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
@@ -592,9 +597,9 @@
 
       <h2>${s.complete ? "Final standings" : "Standings so far"}</h2>
       <div class="scroll"><table>
-        <thead><tr><th>${s.complete ? "Final" : "Now"}</th><th class="l">Manager</th><th>W-L-T</th><th>PF</th><th>PA</th><th>PF / game</th><th>Reg. season</th><th class="l">Result</th></tr></thead>
+        <thead><tr><th>${s.complete ? "Final" : "Now"}</th><th class="l">Manager</th><th>W-L-T</th><th>PF <span class="avg">(avg)</span></th><th>PA <span class="avg">(avg)</span></th><th>Reg. season</th><th class="l">Result</th></tr></thead>
         <tbody>${s.rows.map((r) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(r.key)}"><td class="num rank1">${s.complete ? ord(r.finalRank) : ord(r.regRank)}</td><td class="l mgr">${esc(name(r.key))}<span class="tn">${esc(r.teamName)}</span></td>
-          <td class="num">${rec(r.w, r.l, r.t)}</td><td class="num">${f1(r.pf)}</td><td class="num">${f1(r.pa)}</td><td class="num">${r.g ? f1(r.pf / r.g) : "—"}</td><td class="num">${ord(r.regRank)}</td><td class="l">${result(r)}</td></tr>`).join("")}</tbody></table></div>
+          <td class="num">${rec(r.w, r.l, r.t)}</td><td class="num">${tot(r.pf, r.g)}</td><td class="num">${tot(r.pa, r.g)}</td><td class="num">${ord(r.regRank)}</td><td class="l">${result(r)}</td></tr>`).join("")}</tbody></table></div>
       <p class="sub" style="margin-top:8px">Records and points are regular season. Tap a manager to open their team page. ${S.league.seasons.find((x) => x.year === s.year)?.medianScoring ? "This league also plays the weekly median; those extra wins count toward seeding but aren't head-to-head games." : ""}</p>
 
       <h2>${s.year} records</h2>
@@ -621,22 +626,61 @@
       }).join("")}` : ""}`;
   }
 
-  /* ---------------- managers (rename / merge) ---------------- */
+  /* ---------------- managers (rename / merge, shared with everyone who has the link) ---------------- */
+  const isDemo = () => S.league?.slug === "demo";
+  // names/merges someone saved in this browser before they were shared
+  const legacyEdits = () => ({ names: S.prefs.names || {}, aliases: S.prefs.aliases || {} });
+  const hasAny = (e) => Object.keys(e.names).length || Object.keys(e.aliases).length;
+
   function managersDlg() {
-    // show every original manager id, including ones merged into someone else
+    const server = S.league.edits || NO_EDITS, legacy = legacyEdits();
+    const useLegacy = !hasAny(server) && hasAny(legacy);
+    const ed = useLegacy ? legacy : server;
+    // every original account, including ones merged into someone else
     const origs = {};
-    for (const s of S.league.seasons) for (const t of s.teams) {
+    for (const s of [...S.league.seasons].sort((a, b) => a.year - b.year)) for (const t of s.teams) {
       const o = origs[t.key] ||= { key: t.key, manager: t.manager, teams: new Set(), years: [] };
       if (t.manager) o.manager = t.manager; o.teams.add(t.teamName); o.years.push(s.year);
     }
-    const all = Object.values(origs).sort((a, b) => (a.manager || "").localeCompare(b.manager || ""));
-    const label = (o) => S.prefs.names[o.key] || o.manager || [...o.teams][0];
+    const all = Object.values(origs).sort((a, b) => (ed.names[a.key] || a.manager || "").localeCompare(ed.names[b.key] || b.manager || ""));
+    const label = (o) => ed.names[o.key] || o.manager || [...o.teams][0];
+    const span = (o) => o.years[0] === o.years[o.years.length - 1] ? `${o.years[0]}` : `${o.years[0]}–${o.years[o.years.length - 1]}`;
     openDlg(`<h3>Managers</h3>
-      <p class="sub">Rename anyone, or mark two accounts as the same person (for example, someone who made a new account). Saved in this browser for this league.</p>
-      ${all.map((o) => `<div class="mgrrow"><div class="orig">${esc(o.manager || "No account")} · ${o.years[0]}–${o.years[o.years.length - 1]} · ${esc([...o.teams].slice(-2).join(", "))}</div>
-        <div><label class="f" style="margin-top:0" for="nm-${esc(o.key)}">Show as</label><input type="text" data-name="${esc(o.key)}" id="nm-${esc(o.key)}" value="${esc(S.prefs.names[o.key] || "")}" placeholder="${esc(o.manager || [...o.teams][0])}"></div>
-        <div><label class="f" style="margin-top:0">Same person as</label><select data-alias="${esc(o.key)}"><option value="">(nobody)</option>${all.filter((x) => x.key !== o.key).map((x) => `<option value="${esc(x.key)}" ${S.prefs.aliases[o.key] === x.key ? "selected" : ""}>${esc(label(x))}</option>`).join("")}</select></div></div>`).join("")}
-      <div class="actions"><button class="btn" data-act="saveMgrs">Save</button><button class="btn ghost small" data-act="resetMgrs">Reset all</button></div>`);
+      <p class="sub">${isDemo() ? "This is the demo league, so changes here stay on this page." : "Changes show for <b>everyone with the link</b>. Anyone in the league can edit, and every change can be undone from <b>Change history</b>."}</p>
+      ${useLegacy ? `<p class="warnbox">These names were saved only in this browser before names were shared. Tap <b>Save for everyone</b> to share them.</p>` : ""}
+      ${all.map((o) => `<div class="mgrrow"><div class="orig"><b>${esc(o.manager || "No account")}</b> · ${o.years.length} season${o.years.length === 1 ? "" : "s"} (${span(o)}) · ${esc([...o.teams].slice(-2).join(", "))}</div>
+        <div><label class="f" style="margin-top:0" for="nm-${esc(o.key)}">Show as</label><input type="text" maxlength="40" data-name="${esc(o.key)}" id="nm-${esc(o.key)}" value="${esc(ed.names[o.key] || "")}" placeholder="${esc(o.manager || [...o.teams][0])}"></div>
+        <div><label class="f" style="margin-top:0">Same person as</label><select data-alias="${esc(o.key)}"><option value="">(nobody)</option>${all.filter((x) => x.key !== o.key).map((x) => `<option value="${esc(x.key)}" ${ed.aliases[o.key] === x.key ? "selected" : ""}>${esc(label(x))}</option>`).join("")}</select></div></div>`).join("")}
+      ${isDemo() ? "" : `<label class="f" for="mgrBy">Your name (optional, shown in the change history)</label><input type="text" id="mgrBy" maxlength="30" value="${esc(store.get("flha:by", ""))}">`}
+      <div class="actions"><button class="btn" data-act="saveMgrs">${isDemo() ? "Save" : "Save for everyone"}</button>${isDemo() ? "" : `<button class="btn ghost small" data-act="mgrHistory">Change history</button>`}</div>
+      <div class="err" id="formErr"></div>`);
+  }
+
+  async function saveEdits(next, btn) {
+    if (isDemo()) { S.league = { ...S.league, edits: next }; recompute(); closeDlg(); render(); return toast("Managers updated"); }
+    const by = $("mgrBy")?.value.trim() || "";
+    store.set("flha:by", by);
+    if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
+    try {
+      const L = fromServer(await api("edit", { slug: S.league.slug, ...next, by }));
+      delete S.prefs.names; delete S.prefs.aliases; savePrefs();   // shared now, so drop the old browser-only copy
+      closeDlg(); replaceLeague(L); toast("Saved for everyone with the link");
+    } catch (err) {
+      if (btn) { btn.disabled = false; btn.textContent = "Save for everyone"; }
+      setErr(`Couldn't save: ${err.message}`);
+    }
+  }
+
+  async function historyDlg() {
+    openDlg(`<h3>Change history</h3><div class="loading" style="padding:20px"><div class="spin" aria-hidden="true"></div></div>`);
+    let log;
+    try { log = (await api("history", { slug: S.league.slug })).log || []; }
+    catch (err) { return openDlg(`<h3>Change history</h3><p class="err">${esc(err.message)}</p>`); }
+    openDlg(`<h3>Change history</h3>
+      <p class="sub">The last ${log.length || ""} name changes for this league, newest first. <b>Undo back to here</b> puts every name back the way it was just before that change (later changes are undone too, and the undo shows up here as its own change).</p>
+      ${log.length ? `<div class="list">${log.map((e) => `<div class="item"><span><b>${esc(e.by || "Someone")}</b> <span class="sub">${ago(Date.parse(e.at))}</span><br>${e.changes.map((c) => `<span class="sub">${esc(c)}</span>`).join("<br>")}</span><button class="btn small ghost" data-act="mgrRestore" data-id="${esc(e.id)}">Undo back to here</button></div>`).join("")}</div>`
+        : `<p class="sub">No changes yet.</p>`}
+      <div class="actions"><button class="btn ghost small" data-act="managers">Back to managers</button></div>`);
   }
 
   /* ---------------- events ---------------- */
@@ -689,10 +733,16 @@
           document.querySelectorAll("[data-alias]").forEach((s) => { if (s.value) aliases[s.dataset.alias] = s.value; });
           // a name typed on a merged account should follow it to the person it was merged into
           for (const [from, to] of Object.entries(aliases)) if (names[from] && !names[to]) names[to] = names[from];
-          S.prefs.names = names; S.prefs.aliases = aliases; savePrefs(); recompute(); closeDlg(); render();
-          return toast("Managers updated");
+          return saveEdits({ names, aliases }, a);
         }
-        case "resetMgrs": S.prefs.names = {}; S.prefs.aliases = {}; savePrefs(); recompute(); closeDlg(); render(); return toast("Managers reset");
+        case "mgrHistory": return historyDlg();
+        case "mgrRestore": {
+          a.disabled = true; a.textContent = "Undoing…";
+          try {
+            const L = fromServer(await api("restore", { slug: S.league.slug, id: a.dataset.id, by: store.get("flha:by", "") }));
+            replaceLeague(L); toast("Undone for everyone"); return historyDlg();
+          } catch (err) { a.disabled = false; a.textContent = "Undo back to here"; return toast(`Couldn't undo: ${err.message}`); }
+        }
         case "openRecent": return openSlug(a.dataset.slug);
 
         /* Sleeper */

@@ -20,7 +20,10 @@ Website: https://fantasyleaguehistoryassist.com/ (once the domain is pointed her
 - A private league's share code is only handed out after ESPN accepts the visitor's login for that league. Typing a private league's ID without a working login gets nothing.
 - Anyone with the share link can view that league's history (manager names, team names, scores). That's the point of sharing it.
 
-**Not built yet (see "Later" below):** renames and merges are still saved per browser, not shared.
+**Manager names**
+- Private ESPN leagues show real names as "First L." (ESPN only sends real names to a signed-in member). Leagues loaded before this get everyone's names the next time a member updates with their login. Sleeper and public ESPN leagues show usernames.
+- **Managers ✎** renames people and merges two accounts into one person ("same person as"). Changes are saved on the server and show for everyone with the link.
+- Anyone with the link can edit. Every change goes into **Change history** (last 50, with an optional name), and any change can be undone from there.
 
 ## Files
 
@@ -29,6 +32,7 @@ index.html / app.js / app.css       the site (GitHub Pages, no build step)
 demo.js                             made-up demo league (#demo)
 config.js                           Supabase URL + publishable key (safe to publish)
 supabase/setup.sql                  the one database table (run once)
+supabase/update-shared-names.sql    adds shared names to a table made before Oct 2026 (run once)
 supabase/functions/league-history/  the one backend function
 supabase/functions/_shared/
   flh-stats.js   stats engine (used by the site)
@@ -45,6 +49,8 @@ Everything goes in the **same Supabase project as Fantasy Injury Assist** (`idwp
 ### 1. Create the table
 
 Supabase → **SQL Editor** → **New query** → paste all of `supabase/setup.sql` → **Run**.
+
+If the table already existed before shared names were added, also run `supabase/update-shared-names.sql` the same way.
 
 ### 2. Deploy the function
 
@@ -91,6 +97,8 @@ select platform, is_private, count(*) from flha_leagues group by 1, 2;
 
 - **Avg finish:** final standing after playoffs, finished seasons only. Where the platform doesn't report it, playoff teams are ordered by how far they got (3rd-place game counts), everyone else by regular-season rank.
 - **Avg reg. season:** regular-season standing (the platform's seed).
+- **Averages in parentheses:** anywhere a points total shows, the per-game average follows it, e.g. 1896.9 (145.9).
+- **Superlatives** (best average finish, record, points per game, luck, points allowed) only count managers who played at least half the league's finished seasons.
 - **W-L-T, PF, PA:** regular season head-to-head games. Median-score wins on Sleeper affect seeding but aren't head-to-head games, so they aren't in W-L.
 - **Head-to-head / Teams page rivals:** regular season plus winners-bracket playoff games (toggle on the Head-to-Head tab). Consolation games are left out everywhere.
 - **All-play %:** your record if you'd played every team every week. **Luck** = win % minus all-play %.
@@ -98,5 +106,4 @@ select platform, is_private, count(*) from flha_leagues group by 1, 2;
 
 ## Later
 
-- Shared renames and merges (an edit link for whoever loaded the league).
 - Rivalry card images for the group chat, banner ads, Yahoo.

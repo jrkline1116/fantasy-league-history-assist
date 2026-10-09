@@ -220,3 +220,7 @@ footer .wrap{display:flex;flex-wrap:wrap;gap:8px 18px;justify-content:space-betw
 .mscore{flex:none;font-size:1.05rem}
 h3.round{font:700 .82rem/1 var(--body);letter-spacing:.06em;text-transform:uppercase;color:var(--muted);margin:16px 0 8px}
 .mname .tn{display:inline;margin-left:6px;font-size:.82rem;color:var(--muted)}
+
+/* per-game average shown after a total */
+.avg { color: var(--muted, #8a97a8); font-size: .85em; font-weight: 400; white-space: nowrap; }
+th .avg { font-size: .8em; }

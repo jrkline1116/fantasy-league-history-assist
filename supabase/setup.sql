@@ -11,7 +11,9 @@ create table if not exists public.flha_leagues (
   data        jsonb not null,                         -- { leagueName, seasons: [...] }
   created_at  timestamptz not null default now(),
   updated_at  timestamptz not null default now(),
-  views       integer not null default 0
+  views       integer not null default 0,
+  edits       jsonb not null default '{}'::jsonb,       -- shared renames/merges { names, aliases }
+  edit_log    jsonb not null default '[]'::jsonb        -- last 50 changes, newest first (for undo)
 );
 create unique index if not exists flha_leagues_ext on public.flha_leagues (platform, ext_id);
 create index if not exists flha_leagues_ext_ids on public.flha_leagues using gin (ext_ids);

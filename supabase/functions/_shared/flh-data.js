@@ -181,9 +181,17 @@
   }
 
   /* ======================= ESPN ======================= */
+  // "Graham" + "Cawley" -> "Graham C."
+  function realName(first, last) {
+    const f = String(first || "").trim(), l = String(last || "").trim();
+    if (!f) return null;
+    const cap = (x) => x.charAt(0).toUpperCase() + x.slice(1);
+    return l ? `${cap(f)} ${l.charAt(0).toUpperCase()}.` : cap(f);
+  }
   // ESPN is fetched by the edge function (flh-core.js); this turns one trimmed season into a normalized one.
   function espnNormalize(d) {
-    const memberName = Object.fromEntries((d.members || []).map((m) => [m.id, m.name || [m.first, m.last].filter(Boolean).join(" ")]));
+    // "First L." when ESPN sends real names (signed-in member), otherwise their ESPN display name
+    const memberName = Object.fromEntries((d.members || []).map((m) => [m.id, realName(m.first, m.last) || m.name]));
     const keyOf = {}; const seed = {};
     const teams = d.teams.map((t) => {
       const owner = t.primary || t.owners[0];
@@ -208,7 +216,7 @@
     return { year: d.season, platform: "espn", leagueName: d.name, complete, playoffTeams: d.playoffTeams, teams, games, regRank, finalRank };
   }
 
-  const api = { sleeperFindLeagues, sleeperLoad, sleeperNormalize, espnNormalize, deriveFinal, currentSeason };
+  const api = { sleeperFindLeagues, sleeperLoad, sleeperNormalize, espnNormalize, realName, deriveFinal, currentSeason };
   root.FLHData = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

@@ -95,6 +95,7 @@
     const members = (d.members ?? []).map((m) => ({
       id: String(m.id ?? "").toUpperCase(),
       name: m.displayName || [m.firstName, m.lastName].filter(Boolean).join(" ") || null,
+      first: m.firstName || null, last: m.lastName || null,
     }));
     const teams = (d.teams ?? []).map((t) => ({
       id: t.id,
@@ -115,6 +116,28 @@
       isActive: d.status?.isActive ?? null, members, teams, games,
     };
   }
+
+  // Real names for every manager who ever played, from each season's member list.
+  // ESPN only sends first/last names to a signed-in member, so this runs once per league with a login.
+  // Returns { "espn:{ID}": "First L." }
+  async function espnPeople(id, years, creds) {
+    const people = {};
+    const lists = await pool([...years].sort((a, b) => a - b), 4, async (y) => {
+      const path = y >= 2018
+        ? `/apis/v3/games/ffl/seasons/${y}/segments/0/leagues/${id}?view=mTeam`
+        : `/apis/v3/games/ffl/leagueHistory/${id}?seasonId=${y}&view=mTeam`;
+      try { const d = await espnGet(path, creds); return (Array.isArray(d) ? d[0] : d)?.members ?? []; }
+      catch (e) { if (e instanceof PrivateError) throw e; return []; }
+    });
+    for (const list of lists) for (const m of list || []) {
+      const n = D().realName(m.firstName, m.lastName);
+      if (n && m.id) people[`espn:${String(m.id).toUpperCase()}`] = n;
+    }
+    return people;
+  }
+  const applyPeople = (seasons, people) => seasons.map((s) => ({
+    ...s, teams: s.teams.map((t) => (people[t.key] ? { ...t, manager: people[t.key] } : t)),
+  }));
 
   // since: only seasons after this year (null = everything)
   async function espnHistory(id, creds, since = null) {
@@ -162,12 +185,12 @@
       const creds = cleanCreds(credsIn);
       try {
         const seasons = await espnHistory(id, null);
-        return { platform, extId: id, extIds: [id], isPrivate: false, leagueName: seasons[seasons.length - 1].leagueName || `ESPN league ${id}`, seasons };
+        return { platform, extId: id, extIds: [id], isPrivate: false, leagueName: seasons[seasons.length - 1].leagueName || `ESPN league ${id}`, seasons, peopleDone: "anon" };
       } catch (e) {
         if (!(e instanceof PrivateError) || !creds) throw e;
       }
       const seasons = await espnHistory(id, creds);
-      return { platform, extId: id, extIds: [id], isPrivate: true, leagueName: seasons[seasons.length - 1].leagueName || `ESPN league ${id}`, seasons };
+      return { platform, extId: id, extIds: [id], isPrivate: true, leagueName: seasons[seasons.length - 1].leagueName || `ESPN league ${id}`, seasons, peopleDone: "login" };
     }
     throw new UserError("Unknown platform.");
   }
@@ -207,10 +230,19 @@
         seasons = await espnHistory(rec.extId, creds, since); isPrivate = true;
       }
     }
+    let merged = mergeSeasons(rec.seasons, seasons), peopleDone = rec.peopleDone || null;
+    // Leagues saved before real names were kept: fetch everyone's names once (needs a login to get them)
+    if (peopleDone !== "login" && (creds || !peopleDone)) {
+      try {
+        const people = await espnPeople(rec.extId, merged.map((s) => s.year), creds);
+        merged = applyPeople(merged, people);
+        peopleDone = creds ? "login" : "anon";
+      } catch (e) { if (e instanceof PrivateError) throw e; console.error("names", e?.message); }
+    }
     return {
-      ...rec, isPrivate,
+      ...rec, isPrivate, peopleDone,
       leagueName: seasons.length ? (seasons[seasons.length - 1].leagueName || rec.leagueName) : rec.leagueName,
-      seasons: mergeSeasons(rec.seasons, seasons),
+      seasons: merged,
     };
   }
 

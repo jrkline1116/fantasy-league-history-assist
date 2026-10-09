@@ -6,7 +6,10 @@
 // POST { action: "open",    slug }
 //      { action: "load",    platform: "sleeper"|"espn", league, espn_s2?, swid? }
 //      { action: "refresh", slug, espn_s2?, swid? }
-// 200  { slug, platform, isPrivate, leagueName, seasons, updatedAt }
+//      { action: "edit",    slug, names: {key: name}, aliases: {key: key}, by? }   shared renames/merges
+//      { action: "history", slug }                                                 recent name changes
+//      { action: "restore", slug, id, by? }                                        undo back to before change `id`
+// 200  { slug, platform, isPrivate, leagueName, seasons, updatedAt, edits }
 // 4xx  { error, private?: true }
 import { createClient } from "npm:@supabase/supabase-js@2";
 import "../_shared/flh-stats.js";
@@ -33,10 +36,14 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
 
 type Row = {
   slug: string; platform: string; ext_id: string; ext_ids: string[]; is_private: boolean;
-  name: string | null; data: { leagueName: string; seasons: any[] }; updated_at: string; views: number;
+  name: string | null; data: { leagueName: string; seasons: any[]; peopleDone?: string | null }; updated_at: string; views: number;
+  edits?: Edits | null; edit_log?: LogEntry[] | null;
 };
-const toRec = (r: Row) => ({ platform: r.platform, extId: r.ext_id, extIds: r.ext_ids, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons });
-const out = (r: Row) => ({ slug: r.slug, platform: r.platform, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons, updatedAt: r.updated_at });
+type Edits = { names: Record<string, string>; aliases: Record<string, string> };
+type LogEntry = { id: string; at: string; by: string | null; changes: string[]; prev: Edits };
+const edOf = (r: Row): Edits => ({ names: r.edits?.names ?? {}, aliases: r.edits?.aliases ?? {} });
+const toRec = (r: Row) => ({ platform: r.platform, extId: r.ext_id, extIds: r.ext_ids, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons, peopleDone: r.data.peopleDone ?? null });
+const out = (r: Row) => ({ slug: r.slug, platform: r.platform, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons, updatedAt: r.updated_at, edits: edOf(r) });
 
 // 10 characters, no look-alikes (0/O, 1/l/I): about 10^16 possibilities, so codes can't be guessed
 const ALPHA = "23456789abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ";
@@ -60,12 +67,49 @@ async function byExt(platform: string, id: string): Promise<Row | null> {
 async function save(row: Row, rec: any): Promise<Row> {
   const patch = {
     ext_id: rec.extId, ext_ids: rec.extIds, is_private: rec.isPrivate, name: rec.leagueName,
-    data: { leagueName: rec.leagueName, seasons: rec.seasons }, updated_at: new Date().toISOString(),
+    data: { leagueName: rec.leagueName, seasons: rec.seasons, peopleDone: rec.peopleDone ?? null }, updated_at: new Date().toISOString(),
   };
   const { data, error } = await db.from(TABLE).update(patch).eq("slug", row.slug).select("*").single();
   if (error) throw error;
   return data as Row;
 }
+/* ---------- shared manager names (anyone with the link can edit; every change can be undone) ---------- */
+const LOG_KEEP = 50;
+const cleanName = (v: unknown) => String(v ?? "").replace(/[\u0000-\u001f<>]/g, "").replace(/\s+/g, " ").trim().slice(0, 40);
+function cleanEdits(row: Row, body: any): Edits {
+  const keys = new Set(row.data.seasons.flatMap((s: any) => s.teams.map((t: any) => t.key)));
+  const names: Record<string, string> = {}, aliases: Record<string, string> = {};
+  for (const [k, v] of Object.entries(body?.names ?? {}).slice(0, 300)) { const n = cleanName(v); if (keys.has(k) && n) names[k] = n; }
+  for (const [k, v] of Object.entries(body?.aliases ?? {}).slice(0, 300)) { const to = String(v); if (keys.has(k) && keys.has(to) && k !== to) aliases[k] = to; }
+  // no loops (A -> B -> A)
+  for (const k of Object.keys(aliases)) { let c: string | undefined = aliases[k], n = 0; while (c && n++ < 50) { if (c === k) { delete aliases[k]; break; } c = aliases[c]; } }
+  return { names, aliases };
+}
+function labeler(row: Row, names: Record<string, string>) {
+  const base: Record<string, string> = {};
+  for (const s of [...row.data.seasons].sort((a: any, b: any) => a.year - b.year)) for (const t of s.teams) base[t.key] = t.manager || t.teamName || base[t.key];
+  return { now: (k: string) => names[k] || base[k] || "someone", base: (k: string) => base[k] || "someone" };
+}
+function describe(row: Row, prev: Edits, next: Edits): string[] {
+  const b = labeler(row, prev.names), a = labeler(row, next.names), out: string[] = [];
+  for (const k of new Set([...Object.keys(prev.names), ...Object.keys(next.names)])) {
+    if (prev.names[k] === next.names[k]) continue;
+    out.push(next.names[k] ? `Renamed ${b.now(k)} to ${next.names[k]}` : `${prev.names[k]} went back to ${a.base(k)}`);
+  }
+  for (const k of new Set([...Object.keys(prev.aliases), ...Object.keys(next.aliases)])) {
+    if (prev.aliases[k] === next.aliases[k]) continue;
+    out.push(next.aliases[k] ? `Merged ${a.now(k)} into ${a.now(next.aliases[k])}` : `Split ${b.now(k)} back out from ${b.now(prev.aliases[k])}`);
+  }
+  return out;
+}
+async function saveEdits(row: Row, next: Edits, by: unknown, changes: string[]): Promise<Row> {
+  const entry: LogEntry = { id: newSlug().slice(0, 8), at: new Date().toISOString(), by: cleanName(by).slice(0, 30) || null, changes, prev: edOf(row) };
+  const log = [entry, ...(row.edit_log ?? [])].slice(0, LOG_KEEP);
+  const { data, error } = await db.from(TABLE).update({ edits: next, edit_log: log }).eq("slug", row.slug).select("*").single();
+  if (error) throw error;
+  return data as Row;
+}
+
 const stale = (r: Row) => Date.now() - Date.parse(r.updated_at) > (Core.hasLive(r.data.seasons) ? LIVE_STALE_MS : OFF_STALE_MS);
 
 Deno.serve(async (req) => {
@@ -109,7 +153,7 @@ Deno.serve(async (req) => {
         for (let tries = 0; tries < 3; tries++) {
           const row = {
             slug: newSlug(), platform, ext_id: rec.extId, ext_ids: rec.extIds, is_private: rec.isPrivate,
-            name: rec.leagueName, data: { leagueName: rec.leagueName, seasons: rec.seasons },
+            name: rec.leagueName, data: { leagueName: rec.leagueName, seasons: rec.seasons, peopleDone: rec.peopleDone ?? null },
           };
           const { data, error } = await db.from(TABLE).insert(row).select("*").single();
           if (!error) return json(out(data as Row));
@@ -126,6 +170,31 @@ Deno.serve(async (req) => {
         if (row.is_private && !creds) return json({ ...out(row), needLogin: true });
         if (!creds && Date.now() - Date.parse(row.updated_at) < MIN_REFRESH_MS) return json(out(row));
         return json(out(await save(row, await Core.loadUpdate(toRec(row), creds))));
+      }
+
+      case "edit": {
+        const row = await bySlug(String(body.slug ?? ""));
+        if (!row) return json({ error: "That league link doesn't exist." }, 404);
+        const next = cleanEdits(row, body), changes = describe(row, edOf(row), next);
+        if (!changes.length) return json(out(row));
+        return json(out(await saveEdits(row, next, body.by, changes)));
+      }
+
+      case "history": {
+        const row = await bySlug(String(body.slug ?? ""));
+        if (!row) return json({ error: "That league link doesn't exist." }, 404);
+        return json({ log: (row.edit_log ?? []).map(({ prev: _p, ...e }) => e) });
+      }
+
+      case "restore": {
+        const row = await bySlug(String(body.slug ?? ""));
+        if (!row) return json({ error: "That league link doesn't exist." }, 404);
+        const entry = (row.edit_log ?? []).find((e) => e.id === String(body.id ?? ""));
+        if (!entry) return json({ error: "That change is too old to undo." }, 404);
+        const next = cleanEdits(row, entry.prev), changes = describe(row, edOf(row), next);
+        if (!changes.length) return json(out(row));
+        const when = new Date(entry.at).toLocaleDateString("en-US", { month: "short", day: "numeric", timeZone: "America/Phoenix" });
+        return json(out(await saveEdits(row, next, body.by, [`Undid changes back to before ${entry.by ? entry.by + "'s" : "the"} edit on ${when}`, ...changes])));
       }
     }
     return json({ error: "Unknown action" }, 400);
