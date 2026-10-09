@@ -58,7 +58,21 @@
         if (!m.seasons.includes(s.year)) m.seasons.push(s.year);
       }
     }
-    for (const k of Object.keys(M)) if (opts.names && opts.names[k]) M[k].name = opts.names[k];
+    // A merged person's name: a name typed for them (or any of their accounts) wins; otherwise the
+    // name of the account they were merged into (the row it was done on).
+    const names = opts.names || {};
+    const accts = {};   // original account -> { n seasons, last year, name }
+    for (const s of [...seasonsIn].sort((a, b) => a.year - b.year)) for (const t of s.teams) {
+      const o = (accts[t.key] ||= { key: t.key, n: 0, last: 0, name: null });
+      o.n++; o.last = s.year; o.name = t.manager || o.name || t.teamName;
+    }
+    const groups = {};
+    for (const o of Object.values(accts)) (groups[canon(o.key)] ||= []).push(o);
+    for (const [k, list] of Object.entries(groups)) {
+      if (!M[k]) continue;
+      const own = list.find((o) => o.key === k);
+      M[k].name = names[k] || list.map((o) => names[o.key]).find(Boolean) || own?.name || M[k].name;
+    }
 
     // ---- per-season rows, records, h2h, all-play ----
     const h2h = {};        // h2h[a][b] = { w, l, t, pf, pa, games: [...] }

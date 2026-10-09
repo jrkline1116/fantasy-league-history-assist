@@ -19,7 +19,26 @@
   const ord = (n) => n == null ? "—" : n + (["th", "st", "nd", "rd"][(n % 100 - 20) % 10] || ["th", "st", "nd", "rd"][n % 100] || "th");
   // a total with its per-game average: "1896.9 (145.9)"
   const tot = (t, g, round) => t == null || isNaN(t) ? "—" : `${round ? Math.round(t).toLocaleString() : f1(t)}${g ? ` <span class="avg">(${f1(t / g)})</span>` : ""}`;
-  const NO_EDITS = { names: {}, aliases: {} };
+  const NO_EDITS = { names: {}, aliases: {}, v: 2 };
+  // Edits saved before Oct 9 2026 stored merges the other way round ("Cory K: same person as C K" meant keep Cory K).
+  // Turn those into the current form, where aliases[a] = b means a was merged INTO b.
+  function currentEdits(e) {
+    if (!e) return NO_EDITS;
+    if (e.v === 2 || !Object.keys(e.aliases || {}).length) return { names: e.names || {}, aliases: e.aliases || {}, v: 2 };
+    const seasonsOf = {};
+    for (const s of S.league?.seasons || []) for (const t of s.teams) seasonsOf[t.key] = (seasonsOf[t.key] || 0) + 1;
+    const parent = {}; const find = (k) => { while (parent[k] && parent[k] !== k) k = parent[k]; return k; };
+    for (const [a, b] of Object.entries(e.aliases)) { const ra = find(a), rb = find(b); if (ra !== rb) parent[ra] = rb; }
+    const groups = {};
+    for (const k of new Set([...Object.keys(e.aliases), ...Object.values(e.aliases)])) (groups[find(k)] ||= []).push(k);
+    const aliases = {}, names = { ...(e.names || {}) };
+    for (const list of Object.values(groups)) {
+      // the keeper is an account whose row the merge was picked on (the most seasons if there were several)
+      const keep = list.filter((k) => e.aliases[k]).sort((x, y) => (seasonsOf[y] || 0) - (seasonsOf[x] || 0))[0] || list[0];
+      for (const k of list) if (k !== keep) { aliases[k] = keep; if (names[k] && !names[keep]) names[keep] = names[k]; delete names[k]; }
+    }
+    return { names, aliases, v: 2 };
+  }
   const ago = (ts) => { const m = Math.round((Date.now() - ts) / 60000); return m < 1 ? "just now" : m < 60 ? `${m} min ago` : m < 1440 ? `${Math.round(m / 60)} hr ago` : `${Math.round(m / 1440)} days ago`; };
 
   const S = {
@@ -28,6 +47,8 @@
     tab: "overview",
     prefs: { h2hPlayoffs: true },   // this browser only (old per-browser names/aliases may linger here)
     sort: { key: "avgFinish", asc: true },
+    fsort: { key: "medals", asc: false },   // all-time finishes table
+    minSeasons: null,                       // Overview slider (null = half the league's finished seasons)
     ptsMode: "game",
     selMgr: null, openOpp: null, selYear: null, selWeek: null,
     espnCreds: {},      // this visit only, unless "remember" is ticked (then this browser only)
@@ -213,12 +234,12 @@
   function openLeague(L) {
     S.league = L;
     S.prefs = { h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
-    S.tab = "overview"; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
+    S.tab = "overview"; S.minSeasons = null; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
     recompute(); setHash(L); render();
     window.scrollTo(0, 0);
   }
   function recompute() {
-    const ed = S.league.edits || NO_EDITS;
+    const ed = currentEdits(S.league.edits);
     S.stats = FLHStats.compute(S.league.seasons, { aliases: ed.aliases, names: ed.names, h2hPlayoffs: S.prefs.h2hPlayoffs });
   }
   const savePrefs = () => store.set(`flha:prefs:${leagueKey(S.league)}`, S.prefs);
@@ -362,17 +383,19 @@
     const games = st.seasons.reduce((a, s) => a + s.rows.reduce((b, r) => b + r.g, 0) / 2, 0);
     const champs = new Set(done.map((s) => s.champion).filter(Boolean));
     const best = (arr, f, dir = -1) => [...arr].filter((m) => f(m) != null).sort((a, b) => dir * (f(a) - f(b)))[0];
-    const minS = Math.max(1, Math.ceil(done.length / 2)); // at least half the league's finished seasons
+    const maxS = Math.max(1, ...M.map((m) => m.completeSeasons));
+    const defS = Math.min(maxS, Math.max(1, Math.ceil(done.length / 2)));   // default: at least half the finished seasons
+    const minS = Math.min(maxS, Math.max(1, S.minSeasons ?? defS));
     const eligible = M.filter((m) => m.completeSeasons >= minS);
     const cards = [
-      ["Most titles", best(M, (m) => m.titles || null), (m) => `${m.titles} title${m.titles === 1 ? "" : "s"} (${m.titleYears.join(", ")})`, true],
+      ["Most titles", best(eligible, (m) => m.titles || null), (m) => `${m.titles} title${m.titles === 1 ? "" : "s"} (${m.titleYears.join(", ")})`, true],
       ["Best average finish", best(eligible, (m) => m.avgFinish, 1), (m) => `${f2(m.avgFinish)} over ${m.finishes.length} seasons`],
       ["Most points per game", best(eligible, (m) => m.pfPerGame), (m) => `${f1(m.pfPerGame)} per game`],
       ["Best all-time record", best(eligible, (m) => m.winPct), (m) => `${rec(m.w, m.l, m.t)} (${pct(m.winPct)})`],
       ["Unluckiest manager", best(eligible, (m) => m.luck, 1), (m) => `Win% is ${(Math.abs(m.luck) * 100).toFixed(1)} pts below their all-play %`],
       ["Luckiest manager", best(eligible, (m) => m.luck), (m) => `Win% is ${(m.luck * 100).toFixed(1)} pts above their all-play %`],
       ["Most points allowed", best(eligible, (m) => m.paPerGame), (m) => `${f1(m.paPerGame)} per game against`],
-      ["Most last-place finishes", best(M, (m) => m.lasts || null), (m) => `${m.lasts} time${m.lasts === 1 ? "" : "s"}`],
+      ["Most last-place finishes", best(eligible, (m) => m.lasts || null), (m) => `${m.lasts} time${m.lasts === 1 ? "" : "s"}`],
     ].filter((c) => c[1]);
     const top = (s, f) => [...s.rows].sort((a, b) => f(b) - f(a))[0];
     return `
@@ -395,34 +418,73 @@
             ${cellM(reg1, reg1 ? ` · ${rec(reg1.w, reg1.l, reg1.t)}` : "")}
             ${cellM(pts, pts ? ` · ${f1(pts.pf)} (${f1(pts.g ? pts.pf / pts.g : null)}/g)` : "")}</tr>`;
         }).join("")}</tbody></table></div>
+      <div class="slider panel pad">
+        <label for="minSeasons"><b>Who counts below:</b> managers with at least <b id="minSeasonsN">${minS}</b> finished season<span id="minSeasonsS">${minS === 1 ? "" : "s"}</span> · <span id="minSeasonsC">${eligible.length} of ${M.length} managers</span></label>
+        <input type="range" id="minSeasons" min="1" max="${maxS}" step="1" value="${minS}" aria-describedby="minSeasonsHelp">
+        <div class="ends" id="minSeasonsHelp"><span>Everyone who ever played</span><span>Only the longest-tenured (${maxS} seasons)</span></div>
+      </div>
       <h2>League superlatives</h2>
       <div class="cards">${cards.map(([k, m, d, gold]) => `<div class="card${gold ? " gold" : ""}"><div class="k">${k}</div><div class="who">${esc(m.name)}</div><div class="d">${esc(d(m))}</div></div>`).join("")}</div>
-      <p class="sub" style="margin-top:10px">Averages and superlatives count managers who played at least half the league's finished seasons (${minS} of ${done.length}), except titles and last places.</p>`;
+      ${vFinishes(eligible, done)}`;
+  }
+
+  // All-time finishes: how often each manager finished 1st, 2nd, 3rd... and a strip of every season's finish
+  function vFinishes(list, done) {
+    const years = done.map((s) => s.year);
+    const rows = list.map((m) => {
+      const fin = m.finishes, n = (r) => fin.filter((f) => f.rank === r).length;
+      const by = Object.fromEntries((m.lines || []).filter((l) => l.complete).map((l) => [l.year, l]));
+      return { m, firsts: n(1), seconds: n(2), thirds: n(3), top3: fin.filter((f) => f.rank <= 3).length, played: fin.length,
+        playoffs: m.playoffs, lasts: m.lasts, avg: m.avgFinish, by };
+    });
+    const { key, asc } = S.fsort, dir = asc ? 1 : -1;
+    const medals = (a, b) => b.firsts - a.firsts || b.seconds - a.seconds || b.thirds - a.thirds || (a.avg ?? 99) - (b.avg ?? 99);
+    const val = { name: (r) => r.m.name.toLowerCase(), firsts: (r) => r.firsts, seconds: (r) => r.seconds, thirds: (r) => r.thirds,
+      top3: (r) => r.played ? r.top3 / r.played : 0, playoffs: (r) => r.played ? r.playoffs / r.played : 0, lasts: (r) => r.lasts, avg: (r) => r.avg ?? 99 }[key];
+    rows.sort((a, b) => key === "medals" ? medals(a, b) * (asc ? -1 : 1) : ((val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir || medals(a, b)));
+    const th = (k, label, cls = "") => `<th class="sort ${cls} ${key === k ? "sorted" + (asc ? " asc" : "") : ""}" data-act="fsort" data-k="${k}">${label}</th>`;
+    const pctTxt = (a, b) => b ? `${a} <span class="avg">(${Math.round((a / b) * 100)}%)</span>` : "—";
+    const box = (r, y) => {
+      const l = r.by[y];
+      if (!l || !l.finalRank) return `<span class="fbox none" title="${y}: not in the league">·</span>`;
+      const k = l.finalRank === 1 ? "c1" : l.finalRank <= 3 ? "c3" : l.playoffs ? "cp" : l.finalRank === l.teamCount ? "cl" : "";
+      return `<span class="fbox ${k}" title="${y}: ${ord(l.finalRank)} of ${l.teamCount}${l.playoffs ? " (made playoffs)" : ""}">${l.finalRank}</span>`;
+    };
+    return `<h2>All-time finishes</h2>
+      <p class="sub" style="margin-top:-4px">Ranked by titles, then 2nd-place finishes, then 3rd (tap a column to sort another way). Finished seasons only. The strip shows every season's final place, oldest to newest.</p>
+      <div class="scroll"><table class="compact">
+        <thead><tr>${th("name", "Manager", "l")}${th("firsts", "🏆 1st")}${th("seconds", "2nd")}${th("thirds", "3rd")}${th("top3", "Top 3")}${th("playoffs", "Playoffs")}${th("lasts", "Last")}${th("avg", "Avg<br>finish")}<th class="l">Finish each season<br><span class="avg">${years[0] ?? ""}–${years[years.length - 1] ?? ""}</span></th></tr></thead>
+        <tbody>${rows.map((r) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(r.m.key)}">
+          <td class="l mgr">${esc(r.m.name)}<span class="tn">${r.played} finished season${r.played === 1 ? "" : "s"}</span></td>
+          <td class="num ${r.firsts ? "trophy" : "muted"}">${r.firsts}</td><td class="num ${r.seconds ? "" : "muted"}">${r.seconds}</td><td class="num ${r.thirds ? "" : "muted"}">${r.thirds}</td>
+          <td class="num">${pctTxt(r.top3, r.played)}</td><td class="num">${pctTxt(r.playoffs, r.played)}</td><td class="num ${r.lasts ? "" : "muted"}">${r.lasts}</td>
+          <td class="num"><b>${f2(r.avg)}</b></td><td class="l"><span class="fstrip">${years.map((y) => box(r, y)).join("")}</span></td></tr>`).join("")}</tbody></table></div>
+      <p class="sub" style="margin-top:8px">Strip key: <span class="fbox c1">1</span> champion · <span class="fbox c3">2</span> 2nd or 3rd · <span class="fbox cp">5</span> made playoffs · <span class="fbox">8</span> missed playoffs · <span class="fbox cl">12</span> last place · <span class="fbox none">·</span> not in the league. Hover or tap-and-hold a box for the year.</p>`;
   }
 
   function vStandings() {
     const st = S.stats; const pm = S.ptsMode;
     const P = {
-      game: [["pfPerGame", "PF / game"], ["paPerGame", "PA / game"]],
-      season: [["pfPerSeason", "PF / season"], ["paPerSeason", "PA / season"]],
-      total: [["pf", "PF total"], ["pa", "PA total"]],
+      game: [["pfPerGame", "PF /<br>game"], ["paPerGame", "PA /<br>game"]],
+      season: [["pfPerSeason", "PF /<br>season"], ["paPerSeason", "PA /<br>season"]],
+      total: [["pf", "PF total<br><span class=\"avg\">(per game)</span>"], ["pa", "PA total<br><span class=\"avg\">(per game)</span>"]],
     }[pm];
     const cols = [
       ["name", "Manager", "l", (m) => `<td class="l mgr">${esc(m.name)}<span class="tn">${m.seasons.length} season${m.seasons.length === 1 ? "" : "s"} · ${m.seasons[0]}–${m.seasons[m.seasons.length - 1]}</span></td>`],
       ["winPct", "W-L-T", "", (m) => `<td class="num">${rec(m.w, m.l, m.t)}</td>`],
       ["winPct", "Win %", "", (m) => `<td class="num">${pct(m.winPct)}</td>`],
-      ["avgFinish", "Avg finish", "", (m) => `<td class="num"><b>${f2(m.avgFinish)}</b></td>`],
-      ["avgRegFinish", "Avg reg. season", "", (m) => `<td class="num">${f2(m.avgRegFinish)}</td>`],
+      ["avgFinish", "Avg<br>finish", "", (m) => `<td class="num"><b>${f2(m.avgFinish)}</b></td>`],
+      ["avgRegFinish", "Avg reg.<br>season", "", (m) => `<td class="num">${f2(m.avgRegFinish)}</td>`],
       ["bestFinish", "Best", "", (m) => `<td class="num">${ord(m.bestFinish)}</td>`],
       ["titles", "Titles", "", (m) => `<td class="num ${m.titles ? "trophy" : "muted"}">${m.titles ? "🏆 " + m.titles : "0"}</td>`],
-      ["playoffs", "Playoffs", "", (m) => `<td class="num">${m.playoffs}/${m.completeSeasons}</td>`],
+      ["playoffs", "Play-<br>offs", "", (m) => `<td class="num">${m.playoffs}/${m.completeSeasons}</td>`],
       [P[0][0], P[0][1], "", (m) => `<td class="num">${pm === "total" ? tot(m.pf, m.games, true) : f1(m[P[0][0]])}</td>`],
       [P[1][0], P[1][1], "", (m) => `<td class="num">${pm === "total" ? tot(m.pa, m.games, true) : f1(m[P[1][0]])}</td>`],
-      ["highScore", "High game", "", (m) => `<td class="num" title="${m.highGame ? esc(when(m.highGame)) : ""}">${f1(m.highGame?.my)}</td>`],
-      ["lowScore", "Low game", "", (m) => `<td class="num" title="${m.lowGame ? esc(when(m.lowGame)) : ""}">${f1(m.lowGame?.my)}</td>`],
-      ["allPlayPct", "All-play %", "", (m) => `<td class="num">${pct(m.allPlayPct)}</td>`],
+      ["highScore", "High<br>game", "", (m) => `<td class="num" title="${m.highGame ? esc(when(m.highGame)) : ""}">${f1(m.highGame?.my)}</td>`],
+      ["lowScore", "Low<br>game", "", (m) => `<td class="num" title="${m.lowGame ? esc(when(m.lowGame)) : ""}">${f1(m.lowGame?.my)}</td>`],
+      ["allPlayPct", "All-<br>play %", "", (m) => `<td class="num">${pct(m.allPlayPct)}</td>`],
       ["luck", "Luck", "", (m) => `<td class="num">${signPct(m.luck)}</td>`],
-      ["pw", "Playoff W-L", "", (m) => `<td class="num">${rec(m.pw, m.pl)}</td>`],
+      ["pw", "Playoff<br>W-L", "", (m) => `<td class="num">${rec(m.pw, m.pl)}</td>`],
     ];
     const { key, asc } = S.sort;
     const val = (m) => key === "name" ? m.name.toLowerCase() : key === "highScore" ? m.highGame?.my : key === "lowScore" ? m.lowGame?.my : m[key];
@@ -433,7 +495,7 @@
     });
     return `<div class="toolbar"><p class="sub" style="margin:0">Tap a column to sort. Points are regular season only.</p>
       <div class="seg" role="group" aria-label="Points shown">${[["game", "Per game"], ["season", "Per season"], ["total", "Totals"]].map(([k, l]) => `<button aria-pressed="${pm === k}" data-act="ptsMode" data-m="${k}">${l}</button>`).join("")}</div></div>
-      <div class="scroll"><table>
+      <div class="scroll"><table class="compact">
       <thead><tr>${cols.map(([k, l, c], i) => `<th class="sort ${c} ${k === key && !(i === 1) ? "sorted" + (asc ? " asc" : "") : ""}" data-act="sort" data-k="${k}">${l}</th>`).join("")}</tr></thead>
       <tbody>${list.map((m) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(m.key)}">${cols.map((c) => c[3](m)).join("")}</tr>`).join("")}</tbody></table></div>
       <p class="sub" style="margin-top:10px"><b>Avg finish</b> is the final standing after playoffs, finished seasons only. <b>All-play %</b> is your record if you'd played every team every week. <b>Luck</b> is your real win % minus your all-play % (positive means your schedule helped you). Tap a manager to open their team page.</p>`;
@@ -632,37 +694,86 @@
   const legacyEdits = () => ({ names: S.prefs.names || {}, aliases: S.prefs.aliases || {} });
   const hasAny = (e) => Object.keys(e.names).length || Object.keys(e.aliases).length;
 
-  function managersDlg() {
-    const server = S.league.edits || NO_EDITS, legacy = legacyEdits();
-    const useLegacy = !hasAny(server) && hasAny(legacy);
-    const ed = useLegacy ? legacy : server;
-    // every original account, including ones merged into someone else
+  // Every original account (including ones merged into someone else)
+  function mgrAccounts() {
     const origs = {};
     for (const s of [...S.league.seasons].sort((a, b) => a.year - b.year)) for (const t of s.teams) {
       const o = origs[t.key] ||= { key: t.key, manager: t.manager, teams: new Set(), years: [] };
       if (t.manager) o.manager = t.manager; o.teams.add(t.teamName); o.years.push(s.year);
     }
-    const all = Object.values(origs).sort((a, b) => (ed.names[a.key] || a.manager || "").localeCompare(ed.names[b.key] || b.manager || ""));
-    const label = (o) => ed.names[o.key] || o.manager || [...o.teams][0];
+    return origs;
+  }
+  const canonIn = (aliases) => (k) => { let c = k, n = 0; while (aliases[c] && aliases[c] !== c && n++ < 50) c = aliases[c]; return c; };
+  // Flatten merges so every merged account points straight at the person it was merged into
+  function flattenDraft(d, origs) {
+    const canon = canonIn(d.aliases), aliases = {}, names = { ...d.names };
+    for (const k of Object.keys(origs)) {
+      const K = canon(k);
+      if (K === k) continue;
+      aliases[k] = K;
+      if (names[k] && !names[K]) names[K] = names[k];
+      delete names[k];
+    }
+    return { names, aliases };
+  }
+  // Read the open dialog back into the draft
+  function syncMgrDraft() {
+    const d = S.mgrDraft, origs = mgrAccounts();
+    document.querySelectorAll("[data-name]").forEach((i) => { const v = i.value.trim(); if (v) d.names[i.dataset.name] = v; else delete d.names[i.dataset.name]; });
+    const picked = {};
+    document.querySelectorAll("[data-merge-into]").forEach((sel) => { (picked[sel.dataset.mergeInto] ||= []).push(sel.value); });
+    // removals first: an account merged into K that's no longer picked on K's row goes back on its own
+    for (const [K, vals] of Object.entries(picked)) for (const [x, to] of Object.entries(d.aliases)) if (to === K && !vals.includes(x)) delete d.aliases[x];
+    // additions: picking an account on K's row folds it (and anyone already merged with it) into K
+    for (const [K, vals] of Object.entries(picked)) for (const v of vals) {
+      if (!v || v === K) continue;
+      const canon = canonIn(d.aliases), root = canon(v);
+      for (const y of Object.keys(origs)) if (y !== K && canon(y) === root) d.aliases[y] = K;
+      delete d.aliases[K];
+    }
+    S.mgrDraft = flattenDraft(d, origs);
+  }
+
+  function managersDlg(fresh = true) {
+    const origs = mgrAccounts();
+    if (fresh) {
+      const server = currentEdits(S.league.edits), legacy = currentEdits({ ...legacyEdits(), v: 1 });
+      S.mgrLegacy = !hasAny(server) && hasAny(legacy);
+      const src = S.mgrLegacy ? legacy : server;
+      S.mgrDraft = flattenDraft({ names: { ...src.names }, aliases: { ...src.aliases } }, origs);
+    }
+    const ed = S.mgrDraft, all = Object.values(origs);
     const span = (o) => o.years[0] === o.years[o.years.length - 1] ? `${o.years[0]}` : `${o.years[0]}–${o.years[o.years.length - 1]}`;
+    const seasonsTxt = (o) => `${o.years.length} season${o.years.length === 1 ? "" : "s"} (${span(o)})`;
+    const acct = (o) => o.manager || [...o.teams][0];
+    const shown = (o) => ed.names[o.key] || acct(o);
+    const people = all.filter((o) => !ed.aliases[o.key]).sort((a, b) => shown(a).localeCompare(shown(b)));
+    const membersOf = (K) => all.filter((o) => ed.aliases[o.key] === K);
+    const opts = (K, sel) => `<option value="">${sel ? "Remove this account" : "Choose an account…"}</option>` + all.filter((x) => x.key !== K)
+      .sort((a, b) => acct(a).localeCompare(acct(b)))
+      .map((x) => { const into = ed.aliases[x.key]; const note = into && into !== K ? ` · now part of ${shown(origs[into])}` : "";
+        return `<option value="${esc(x.key)}" ${sel === x.key ? "selected" : ""}>${esc(acct(x))} · ${seasonsTxt(x)}${esc(note)}</option>`; }).join("");
+    const keepScroll = !fresh && $("dlg").open ? $("dlgBody").scrollTop : null;
     openDlg(`<h3>Managers</h3>
       <p class="sub">${isDemo() ? "This is the demo league, so changes here stay on this page." : "Changes show for <b>everyone with the link</b>. Anyone in the league can edit, and every change can be undone from <b>Change history</b>."}</p>
-      ${useLegacy ? `<p class="warnbox">These names were saved only in this browser before names were shared. Tap <b>Save for everyone</b> to share them.</p>` : ""}
-      ${all.map((o) => `<div class="mgrrow"><div class="orig"><b>${esc(o.manager || "No account")}</b> · ${o.years.length} season${o.years.length === 1 ? "" : "s"} (${span(o)}) · ${esc([...o.teams].slice(-2).join(", "))}</div>
-        <div><label class="f" style="margin-top:0" for="nm-${esc(o.key)}">Show as</label><input type="text" maxlength="40" data-name="${esc(o.key)}" id="nm-${esc(o.key)}" value="${esc(ed.names[o.key] || "")}" placeholder="${esc(o.manager || [...o.teams][0])}"></div>
-        <div><label class="f" style="margin-top:0">Same person as</label><select data-alias="${esc(o.key)}"><option value="">(nobody)</option>${all.filter((x) => x.key !== o.key).map((x) => `<option value="${esc(x.key)}" ${ed.aliases[o.key] === x.key ? "selected" : ""}>${esc(label(x))}</option>`).join("")}</select></div></div>`).join("")}
+      <p class="sub"><b>Same person, two accounts?</b> Go to the row of the name you want to keep and pick the other account under <b>Merge in another account</b>. It gets folded into that row and their records combine.</p>
+      ${S.mgrLegacy ? `<p class="warnbox">These names were saved only in this browser before names were shared. Tap <b>Save for everyone</b> to share them.</p>` : ""}
+      ${people.map((o) => { const mem = membersOf(o.key); return `<div class="mgrrow"><div class="orig"><b>${esc(acct(o))}</b> · ${seasonsTxt(o)} · ${esc([...o.teams].slice(-2).join(", "))}${mem.map((m) => `<br>＋ merged in: <b>${esc(acct(m))}</b> · ${seasonsTxt(m)}`).join("")}</div>
+        <div><label class="f" style="margin-top:0" for="nm-${esc(o.key)}">Show as</label><input type="text" maxlength="40" data-name="${esc(o.key)}" id="nm-${esc(o.key)}" value="${esc(ed.names[o.key] || "")}" placeholder="${esc(acct(o))}"></div>
+        <div><label class="f" style="margin-top:0">Merge in another account</label>${[...mem.map((m) => m.key), ""].map((k) => `<select data-merge-into="${esc(o.key)}" style="margin-bottom:6px">${opts(o.key, k)}</select>`).join("")}</div></div>`; }).join("")}
       ${isDemo() ? "" : `<label class="f" for="mgrBy">Your name (optional, shown in the change history)</label><input type="text" id="mgrBy" maxlength="30" value="${esc(store.get("flha:by", ""))}">`}
       <div class="actions"><button class="btn" data-act="saveMgrs">${isDemo() ? "Save" : "Save for everyone"}</button>${isDemo() ? "" : `<button class="btn ghost small" data-act="mgrHistory">Change history</button>`}</div>
       <div class="err" id="formErr"></div>`);
+    if (keepScroll != null) $("dlgBody").scrollTop = keepScroll;
   }
 
   async function saveEdits(next, btn) {
-    if (isDemo()) { S.league = { ...S.league, edits: next }; recompute(); closeDlg(); render(); return toast("Managers updated"); }
+    if (isDemo()) { S.league = { ...S.league, edits: { ...next, v: 2 } }; recompute(); closeDlg(); render(); return toast("Managers updated"); }
     const by = $("mgrBy")?.value.trim() || "";
     store.set("flha:by", by);
     if (btn) { btn.disabled = true; btn.textContent = "Saving…"; }
     try {
-      const L = fromServer(await api("edit", { slug: S.league.slug, ...next, by }));
+      const L = fromServer(await api("edit", { slug: S.league.slug, names: next.names, aliases: next.aliases, v: 2, by }));
       delete S.prefs.names; delete S.prefs.aliases; savePrefs();   // shared now, so drop the old browser-only copy
       closeDlg(); replaceLeague(L); toast("Saved for everyone with the link");
     } catch (err) {
@@ -699,6 +810,11 @@
           S.sort = S.sort.key === k ? { key: k, asc: !S.sort.asc } : { key: k, asc: ["name", "avgFinish", "avgRegFinish", "bestFinish", "paPerGame", "paPerSeason", "pa"].includes(k) };
           return render();
         }
+        case "fsort": {
+          const k = a.dataset.k;
+          S.fsort = S.fsort.key === k ? { key: k, asc: !S.fsort.asc } : { key: k, asc: ["name", "avg", "lasts"].includes(k) };
+          const y = window.scrollY; render(); return window.scrollTo(0, y);
+        }
         case "ptsMode": S.ptsMode = a.dataset.m; if (/^p[fa]/.test(S.sort.key)) S.sort.key = "avgFinish"; return render();
         case "gotoRival": S.tab = "teams"; S.selMgr = a.dataset.k; S.openOpp = null; render(); return window.scrollTo(0, 0);
         case "gotoSeason": S.tab = "seasons"; S.selYear = Number(a.dataset.year); S.selWeek = null; render(); return window.scrollTo(0, 0);
@@ -727,14 +843,7 @@
         case "hideShare": S.showShare = false; return render();
         case "refresh": return refreshLeague();
         case "managers": return managersDlg();
-        case "saveMgrs": {
-          const names = {}, aliases = {};
-          document.querySelectorAll("[data-name]").forEach((i) => { if (i.value.trim()) names[i.dataset.name] = i.value.trim(); });
-          document.querySelectorAll("[data-alias]").forEach((s) => { if (s.value) aliases[s.dataset.alias] = s.value; });
-          // a name typed on a merged account should follow it to the person it was merged into
-          for (const [from, to] of Object.entries(aliases)) if (names[from] && !names[to]) names[to] = names[from];
-          return saveEdits({ names, aliases }, a);
-        }
+        case "saveMgrs": syncMgrDraft(); return saveEdits(S.mgrDraft, a);
         case "mgrHistory": return historyDlg();
         case "mgrRestore": {
           a.disabled = true; a.textContent = "Undoing…";
@@ -799,7 +908,20 @@
       }
     } catch (err) { toast(err.message || String(err)); }
   });
+  // Overview slider: update the label while dragging, redraw when let go
+  document.addEventListener("input", (e) => {
+    if (e.target.id !== "minSeasons") return;
+    const v = Number(e.target.value), M = S.stats.managers;
+    $("minSeasonsN").textContent = v; $("minSeasonsS").textContent = v === 1 ? "" : "s";
+    $("minSeasonsC").textContent = `${M.filter((m) => m.completeSeasons >= v).length} of ${M.length} managers`;
+  });
   document.addEventListener("change", (e) => {
+    if (e.target.id === "minSeasons") {
+      S.minSeasons = Number(e.target.value);
+      const y = window.scrollY; render(); window.scrollTo(0, y); $("minSeasons")?.focus(); return;
+    }
+    // picking or removing an account in the Managers dialog redraws it so merged accounts show under their person
+    if (e.target.matches?.("[data-merge-into]")) { syncMgrDraft(); return managersDlg(false); }
     if (e.target.id === "weekSel") { S.selWeek = Number(e.target.value); render(); $("weekSel")?.focus(); }
   });
   document.addEventListener("keydown", (e) => {

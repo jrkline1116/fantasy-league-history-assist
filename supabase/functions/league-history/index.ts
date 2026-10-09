@@ -39,9 +39,10 @@ type Row = {
   name: string | null; data: { leagueName: string; seasons: any[]; peopleDone?: string | null }; updated_at: string; views: number;
   edits?: Edits | null; edit_log?: LogEntry[] | null;
 };
-type Edits = { names: Record<string, string>; aliases: Record<string, string> };
+type Edits = { names: Record<string, string>; aliases: Record<string, string>; v?: number };
 type LogEntry = { id: string; at: string; by: string | null; changes: string[]; prev: Edits };
-const edOf = (r: Row): Edits => ({ names: r.edits?.names ?? {}, aliases: r.edits?.aliases ?? {} });
+// v: 2 = "aliases[a] = b" means a was merged INTO b. Edits saved before v2 meant the reverse (the site flips those).
+const edOf = (r: Row): Edits => ({ names: r.edits?.names ?? {}, aliases: r.edits?.aliases ?? {}, ...(r.edits?.v ? { v: r.edits.v } : {}) });
 const toRec = (r: Row) => ({ platform: r.platform, extId: r.ext_id, extIds: r.ext_ids, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons, peopleDone: r.data.peopleDone ?? null });
 const out = (r: Row) => ({ slug: r.slug, platform: r.platform, isPrivate: r.is_private, leagueName: r.data.leagueName, seasons: r.data.seasons, updatedAt: r.updated_at, edits: edOf(r) });
 
@@ -83,7 +84,7 @@ function cleanEdits(row: Row, body: any): Edits {
   for (const [k, v] of Object.entries(body?.aliases ?? {}).slice(0, 300)) { const to = String(v); if (keys.has(k) && keys.has(to) && k !== to) aliases[k] = to; }
   // no loops (A -> B -> A)
   for (const k of Object.keys(aliases)) { let c: string | undefined = aliases[k], n = 0; while (c && n++ < 50) { if (c === k) { delete aliases[k]; break; } c = aliases[c]; } }
-  return { names, aliases };
+  return { names, aliases, ...(body?.v === 2 ? { v: 2 } : {}) };
 }
 function labeler(row: Row, names: Record<string, string>) {
   const base: Record<string, string> = {};
@@ -176,8 +177,8 @@ Deno.serve(async (req) => {
         const row = await bySlug(String(body.slug ?? ""));
         if (!row) return json({ error: "That league link doesn't exist." }, 404);
         const next = cleanEdits(row, body), changes = describe(row, edOf(row), next);
-        if (!changes.length) return json(out(row));
-        return json(out(await saveEdits(row, next, body.by, changes)));
+        if (!changes.length && edOf(row).v === next.v) return json(out(row));
+        return json(out(await saveEdits(row, next, body.by, changes.length ? changes : ["Updated how merges are stored (no visible change)"])));
       }
 
       case "history": {

@@ -224,3 +224,26 @@ h3.round{font:700 .82rem/1 var(--body);letter-spacing:.06em;text-transform:upper
 /* per-game average shown after a total */
 .avg { color: var(--muted, #8a97a8); font-size: .85em; font-weight: 400; white-space: nowrap; }
 th .avg { font-size: .8em; }
+
+/* compact tables: two-line headers, tighter cells, manager column stays put while scrolling sideways */
+table.compact th, table.compact td { padding: 8px 7px; }
+table.compact thead th { white-space: normal; vertical-align: bottom; line-height: 1.15; }
+table.compact tbody td:first-child { position: sticky; left: 0; background: var(--surface); z-index: 1; }
+table.compact thead th:first-child { position: sticky; left: 0; z-index: 2; }
+table.compact tr.clickable:hover td:first-child { background: var(--surface2); }
+
+/* Overview "who counts" slider */
+.slider { margin: 18px 0 4px; }
+.slider label { display: block; font-size: .95rem; margin-bottom: 8px; }
+.slider input[type=range] { width: 100%; accent-color: var(--gold); }
+.slider .ends { display: flex; justify-content: space-between; font-size: .8rem; color: var(--muted); margin-top: 2px; gap: 10px; }
+
+/* finish strip: one box per season (numbers inside so it also reads in black & white) */
+.fstrip { display: inline-flex; gap: 3px; }
+.fbox { display: inline-flex; align-items: center; justify-content: center; min-width: 22px; height: 22px; padding: 0 3px; border-radius: 5px;
+  font: 700 .74rem/1 var(--body); border: 1px solid var(--line); color: var(--muted); background: transparent; }
+.fbox.c1 { background: var(--gold); border-color: var(--gold); color: var(--surface); }
+.fbox.c3 { background: var(--gold-bg); border: 2px solid var(--gold); color: var(--ink); }
+.fbox.cp { background: var(--surface2); border-color: var(--muted); color: var(--ink); }
+.fbox.cl { border-style: dashed; color: var(--loss); }
+.fbox.none { border-color: transparent; }
