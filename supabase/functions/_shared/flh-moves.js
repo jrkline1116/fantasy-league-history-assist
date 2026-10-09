@@ -165,6 +165,56 @@
   };
   // team defenses have negative IDs: -16000 minus the NFL team's ID
   const espnDef = (id) => { const n = Number(id); if (n > -16000 || n < -16040) return null; const t = PRO[-16000 - n]; return t ? [`${t[1]} D/ST`, "D/ST", t[0]] : null; };
+  // ESPN's public athlete pages: last resort for anyone the other lists don't know (often rookies)
+  async function espnAthletes(ids) {
+    const out = {};
+    await pool(ids.slice(0, 120), 6, async (id) => {
+      if (Number(id) < 0) return;
+      for (const url of [`https://sports.core.api.espn.com/v3/sports/football/nfl/athletes/${id}`, `https://site.web.api.espn.com/apis/common/v3/sports/football/nfl/athletes/${id}`]) {
+        try {
+          const res = await fetch(url, { headers: { accept: "application/json" } });
+          if (!res.ok) { try { await res.body?.cancel(); } catch { /* ignore */ } continue; }
+          const j = await res.json(), a = j.athlete || j;
+          const nm = a.fullName || a.displayName;
+          if (!nm) continue;
+          const pos = a.position?.abbreviation || "";
+          out[id] = [nm, pos === "PK" ? "K" : pos];
+          return;
+        } catch { /* try the next one */ }
+      }
+    });
+    return out;
+  }
+  const unnamed = (pl) => Object.entries(pl || {}).filter(([, v]) => /^Player -?\d+$/.test(v?.[0] || "")).map(([k]) => k);
+
+  // Fill in names for ESPN player IDs: defenses, Sleeper's espn_id list, ESPN's league player
+  // lookup, then ESPN's athlete pages. Changes pl in place.
+  async function resolveEspn(ids, pl, leagueId, year, creds, opts) {
+    let missing = ids.filter((p) => !pl[p] || /^Player /.test(pl[p][0]));
+    for (const p of missing) { const x = espnDef(p); if (x) pl[p] = x; }
+    missing = missing.filter((p) => !pl[p] || /^Player /.test(pl[p][0]));
+    if (missing.length) {
+      try { const db = await playerDb(opts.cache); for (const p of missing) if (db.e[p]) pl[p] = db.e[p]; }
+      catch (e) { console.error("players", e?.message); }
+      missing = missing.filter((p) => !pl[p] || /^Player /.test(pl[p][0]));
+    }
+    if (missing.length && year >= 2018) {
+      try {
+        const filter = JSON.stringify({ players: { filterIds: { value: missing.map(Number) }, limit: missing.length } });
+        const r = await C().espnGet(`/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${leagueId}?scoringPeriodId=0&view=kona_player_info`, creds, { "x-fantasy-filter": filter });
+        for (const x of r?.players || []) { const info = espnPlayer(x.player); if (info) pl[String(x.id ?? x.player?.id)] = info; }
+      } catch (e) { if (e instanceof C().PrivateError) throw e; console.error("kona", e?.message); }
+      missing = missing.filter((p) => !pl[p] || /^Player /.test(pl[p][0]));
+    }
+    if (missing.length) {
+      const got = await espnAthletes(missing);
+      Object.assign(pl, got);
+      missing = missing.filter((p) => !got[p]);
+      if (missing.length) console.error("unnamed", year, missing.slice(0, 20).join(","));
+    }
+    for (const p of missing) if (!pl[p]) pl[p] = [`Player ${p}`, ""];
+  }
+
   const TX_FILTER = JSON.stringify({ transactions: { filterType: { value: ["FREEAGENT", "WAIVER", "TRADE_ACCEPT", "TRADE_PROPOSAL", "TRADE_UPHOLD"] } } });
 
   async function espnMoves(id, year, creds, opts) {
@@ -255,23 +305,8 @@
     }
 
     const m = { draft, rost, tx, tc, pl, ...(faab ? { faab: true } : {}), mv: MOVES_V };
-    // names: roster entries above, then defenses, then Sleeper's espn_id list, then ask ESPN for the rest
-    let missing = [...referenced(m)].filter((p) => !pl[p]);
-    for (const p of missing) { const x = espnDef(p); if (x) pl[p] = x; }
-    missing = missing.filter((p) => !pl[p]);
-    if (missing.length) {
-      try { const db = await playerDb(opts.cache); for (const p of missing) if (db.e[p]) pl[p] = db.e[p]; }
-      catch (e) { console.error("players", e?.message); }
-      missing = missing.filter((p) => !pl[p]);
-    }
-    if (missing.length && year >= 2018) {
-      try {
-        const filter = JSON.stringify({ players: { filterIds: { value: missing.map(Number) }, limit: missing.length } });
-        const r = await C().espnGet(`/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${id}?view=kona_player_info`, creds, { "x-fantasy-filter": filter });
-        for (const x of r?.players || []) { const info = espnPlayer(x.player); if (info) pl[String(x.id ?? x.player?.id)] = info; }
-      } catch (e) { if (e instanceof C().PrivateError) throw e; console.error("kona", e?.message); }
-    }
-    for (const p of referenced(m)) if (!pl[p]) pl[p] = [`Player ${p}`, ""];
+    // names: roster entries above, then everything else resolveEspn can find
+    await resolveEspn([...referenced(m)], pl, id, year, creds, opts);
     return m;
   }
 
@@ -279,7 +314,20 @@
   const FIELDS = ["draft", "rost", "tx", "tc", "pl", "faab", "mv"];
   const strip = (s) => { const o = { ...s }; for (const f of FIELDS) delete o[f]; delete o.mvErr; return o; };
   const needsMoves = (s) => s.mv == null;
-  const pendingCount = (seasons) => seasons.filter(needsMoves).length;
+  // a season saved with players we couldn't name (tried at most twice more)
+  const needsNames = (s) => s.mv >= 1 && (s.nmFix || 0) < 2 && unnamed(s.pl).length > 0;
+  const pendingCount = (seasons) => seasons.filter((s) => needsMoves(s) || needsNames(s)).length;
+
+  async function fixNames(rec, seasons, creds, opts) {
+    return pool(seasons, 2, async (s) => {
+      const pl = { ...s.pl }, ids = unnamed(pl);
+      try {
+        if (rec.platform === "espn") await resolveEspn(ids, pl, rec.extId, s.year, creds, opts);
+        else { const db = await playerDb(opts.cache); for (const p of ids) if (db.s[p]) pl[p] = db.s[p]; }
+      } catch (e) { if (e?.private) throw e; console.error("names", s.year, e?.message); }
+      return { ...s, pl, nmFix: (s.nmFix || 0) + 1 };
+    });
+  }
 
   // Sleeper seasons saved before league IDs were kept on each season: find them from the saved ID list
   async function sleeperIds(rec) {
@@ -320,13 +368,14 @@
   async function backfill(rec, creds, opts = {}) {
     const batch = rec.platform === "espn" ? 4 : 5;
     const todo = rec.seasons.filter(needsMoves).sort((a, b) => b.year - a.year).slice(0, batch);
-    if (!todo.length) return rec;
-    const done = await fill(rec, todo, creds, opts);
+    const names = todo.length ? [] : rec.seasons.filter(needsNames).sort((a, b) => b.year - a.year).slice(0, 4);
+    if (!todo.length && !names.length) return rec;
+    const done = todo.length ? await fill(rec, todo, creds, opts) : await fixNames(rec, names, creds, opts);
     const byYear = Object.fromEntries(done.map((s) => [s.year, s]));
     return { ...rec, seasons: rec.seasons.map((s) => byYear[s.year] || s) };
   }
 
-  const api = { MOVES_V, backfill, fill, pendingCount, needsMoves, sleeperMoves, espnMoves, playerDb, referenced };
+  const api = { MOVES_V, backfill, fill, pendingCount, needsMoves, needsNames, sleeperMoves, espnMoves, playerDb, referenced, espnAthletes };
   root.FLHMoves = api;
   if (typeof module !== "undefined" && module.exports) module.exports = api;
 })(typeof window !== "undefined" ? window : globalThis);

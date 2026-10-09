@@ -130,7 +130,7 @@ async function saveEdits(row: Row, next: Edits, by: unknown, changes: string[]):
 }
 
 // the fields flh-moves.js adds to a season
-const MOVE_FIELDS = ["draft", "rost", "tx", "tc", "pl", "faab", "mv", "mvErr", "lid"];
+const MOVE_FIELDS = ["draft", "rost", "tx", "tc", "pl", "faab", "mv", "mvErr", "lid", "nmFix"];
 
 const stale = (r: Row) => Date.now() - Date.parse(r.updated_at) > (Core.hasLive(r.data.seasons) ? LIVE_STALE_MS : OFF_STALE_MS);
 
@@ -202,10 +202,12 @@ Deno.serve(async (req) => {
         const rec = await Moves.backfill(toRec(row), Core.cleanCreds(creds), opts);
         // someone else may have saved this league while we were fetching: only add moves, keep their copy of everything else
         const now = (await bySlug(row.slug)) ?? row;
-        const filled = Object.fromEntries(rec.seasons.filter((s: any) => s.mv != null || s.mvErr).map((s: any) => [s.year, s]));
+        const before = Object.fromEntries(row.data.seasons.map((s: any) => [s.year, s]));
+        const filled = Object.fromEntries(rec.seasons.filter((s: any) => s !== before[s.year]).map((s: any) => [s.year, s]));
         const seasons = now.data.seasons.map((s: any) => {
           const f = filled[s.year];
-          if (s.mv != null || !f) return s;
+          // fill seasons without moves yet, or repaired player names on a season nobody else changed meanwhile
+          if (!f || (s.mv != null && !(f.nmFix > (s.nmFix || 0)))) return s;
           const { mvErr: _e, ...base } = s;
           return { ...base, ...Object.fromEntries(MOVE_FIELDS.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])) };
         });

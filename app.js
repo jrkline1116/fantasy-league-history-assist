@@ -47,7 +47,7 @@
     tab: "overview",
     prefs: { h2hPlayoffs: true },   // this browser only (old per-browser names/aliases may linger here)
     sort: { key: "avgFinish", asc: true },
-    fsort: { key: "medals", asc: false },   // all-time finishes table
+    fsort: { key: "pts", asc: false },      // all-time finishes table (default: podium points)
     minSeasons: null,                       // Overview slider (null = half the league's finished seasons)
     ptsMode: "game",
     selMgr: null, openOpp: null, selYear: null, selWeek: null,
@@ -98,7 +98,8 @@
       return { landing: true };
     }
     if (raw === "demo") return { demo: true };
-    if (SLUG_RE.test(raw)) return { slug: raw };
+    const [sl, tab] = raw.split("/");
+    if (SLUG_RE.test(sl)) return { slug: sl, tab: tab || null };
     return { landing: true };
   }
   function setHash(L) {
@@ -106,16 +107,39 @@
     if (location.hash !== h) history.replaceState(null, "", location.pathname + h);
   }
 
+  /* ---------------- ads (Google AdSense, only when config.js has a publisher ID) ---------------- */
+  // Ad boxes live outside the page content, so they load once and stay put while you switch tabs.
+  function setupAds() {
+    const client = String(CFG.ADSENSE_CLIENT || "").trim();
+    if (!/^ca-pub-\d{10,20}$/.test(client)) return;
+    const sc = document.createElement("script");
+    sc.async = true; sc.crossOrigin = "anonymous";
+    sc.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
+    document.head.appendChild(sc);
+    const slots = CFG.ADSENSE_SLOTS || {};
+    const unit = (id, slot, fmt) => {
+      const box = $(id); if (!box || !slot) return;
+      box.hidden = false;
+      box.innerHTML = `<ins class="adsbygoogle" style="display:block" data-ad-client="${client}" data-ad-slot="${esc(slot)}" data-ad-format="${fmt}"${fmt === "auto" ? ' data-full-width-responsive="true"' : ""}></ins>`;
+      try { (window.adsbygoogle = window.adsbygoogle || []).push({}); } catch { /* blocked */ }
+    };
+    unit("adTop", slots.top, "horizontal");
+    unit("adBottom", slots.bottom, "auto");
+    // side rails only when the screen is wide enough to have empty margins
+    if (slots.side && window.matchMedia("(min-width: 1480px)").matches) { unit("adLeft", slots.side, "vertical"); unit("adRight", slots.side, "vertical"); }
+  }
+
   async function boot() {
     if (CFG.BMC_URL) $("bmc").href = CFG.BMC_URL;
+    setupAds();
     const r = readHash();
     if (r.demo || window.FLH_PREVIEW) return openLeague(FLHDemo.demoLeague());
-    if (r.slug) return openSlug(r.slug);
+    if (r.slug) { S.pendingTab = r.tab; return openSlug(r.slug); }
     renderLanding();
   }
   window.addEventListener("hashchange", () => {
     const r = readHash();
-    if (r.slug && r.slug !== S.league?.slug) return openSlug(r.slug);
+    if (r.slug && r.slug !== S.league?.slug) { S.pendingTab = r.tab; return openSlug(r.slug); }
     if (r.demo && S.league?.slug !== "demo") return openLeague(FLHDemo.demoLeague());
     if (r.landing && !S.pendingEspn && S.league) { S.league = null; renderLanding(); }
     if (S.pendingEspn) renderLanding();
@@ -242,7 +266,9 @@
     S.league = L;
     S.prefs = { h2hPlayoffs: true, ...store.get(`flha:prefs:${leagueKey(L)}`, {}) };
     S.tab = "overview"; S.minSeasons = null; S.selMgr = null; S.openOpp = null; S.selYear = null; S.selWeek = null;
-    S.dYear = null; S.mvYear = "all"; S.mvMgr = ""; S.mvAll = false; S.rYear = null; S.rMgr = ""; S.back = []; S.trAll = false;
+    S.dYear = null; S.mvYear = "all"; S.mvMgr = ""; S.mvAll = false; S.rYear = null; S.rMgr = ""; S.back = [];
+    if (S.pendingTab && [...TABS, ...MOVE_TABS].some(([k]) => k === S.pendingTab)) S.tab = S.pendingTab;
+    S.pendingTab = null; S.trAll = false;
     recompute(); setHash(L); render();
     window.scrollTo(0, 0);
   }
@@ -358,7 +384,170 @@
         <div><b>Rivalries</b>Who you've beaten the most, who you've lost to the most, and every game between any two managers.</div>
         <div><b>Luck, measured</b>All-play record shows how you'd do playing everyone every week. The gap is your luck.</div>
         <div><b>Record book</b>Highest and lowest scores, biggest blowouts, closest games, and the longest streaks.</div>
-      </div>`;
+        <div><b>Drafts and rosters</b>Every draft board, every first-round pick, and each team's final roster, including the champion's.</div>
+        <div><b>Trades and waivers</b>Every trade and pickup, who works the wire most, FAAB spent, and favorite trade partners.</div>
+      </div>
+
+      <section class="faq">
+        <h2>Questions</h2>
+        <details><summary>How do I see my fantasy league's history?</summary><p>Enter your Sleeper username (or league ID), or paste your ESPN league's web address, and tap Load. Every past season loads automatically, back to the year your league started, and you get a link to share with the league.</p></details>
+        <details><summary>Does it work with private ESPN leagues?</summary><p>Yes. Either ask your commissioner to make the league viewable to the public (30 seconds in ESPN's League Manager tools), or use the one-click bookmark on a computer. Your ESPN login is used only to read the league and is never saved on our server.</p></details>
+        <details><summary>Does my whole league need to sign up?</summary><p>No. One person loads the league and shares the link. Everyone else just opens it on any phone or computer, no account or login needed.</p></details>
+        <details><summary>What stats does it show?</summary><p>All-time standings and record, average finish, titles, playoff trips, points for and against (with per-game averages), head-to-head records against every manager, all-play record and luck, the league record book, every draft, final rosters, trades and waiver pickups.</p></details>
+        <details><summary>A leaguemate changed accounts. Can I combine them?</summary><p>Yes. Open Managers, then merge the old account into the new one. Their records combine, and the change shows for everyone with the link (and can be undone).</p></details>
+        <details><summary>Is it free?</summary><p>Yes, free for Sleeper and ESPN leagues. It isn't affiliated with ESPN or Sleeper.</p></details>
+      </section>`;
+  }
+
+  /* ---------------- sharing ---------------- */
+  // A ready-made message with a few bragging-rights lines, so the link doesn't arrive bare.
+  function shareDefault() {
+    const L = S.league, st = S.stats, done = st.seasons.filter((s) => s.complete);
+    const yrs = st.years, M = st.managers;
+    const half = Math.max(1, Math.ceil(done.length / 2));
+    const reg = M.filter((m) => m.completeSeasons >= half);
+    const most = [...M].sort((a, b) => b.titles - a.titles || (a.avgFinish ?? 99) - (b.avgFinish ?? 99))[0];
+    const bestAvg = [...reg].filter((m) => m.avgFinish != null).sort((a, b) => a.avgFinish - b.avgFinish)[0];
+    const last = done[done.length - 1];
+    const lines = [`${L.leagueName}: our whole league history, ${yrs[0]}–${yrs[yrs.length - 1]} (${yrs.length} seasons).`];
+    if (last?.champion) lines.push(`🏆 Reigning champ: ${name(last.champion)} (${last.year})`);
+    if (most?.titles) lines.push(`👑 Most titles: ${most.name} (${most.titles})`);
+    if (bestAvg) lines.push(`📈 Best average finish: ${bestAvg.name} (${f2(bestAvg.avgFinish)})`);
+    lines.push("", "All-time standings, head-to-head records, the record book, every draft, roster and trade. Opens on any phone, no login.");
+    return lines.join("\n");
+  }
+  function shareParts() {
+    const url = shareUrl(S.league);
+    const text = ($("shareMsg")?.value ?? shareDefault()).trim();
+    const subject = `${S.league.leagueName} · league history`;
+    return { url, text, subject, msg: `${text}\n\n${url}` };
+  }
+  function shareDlg() {
+    const { url, subject } = shareParts(), text = shareDefault(), msg = `${text}\n\n${url}`;
+    const enc = encodeURIComponent;
+    openDlg(`<h3>Share ${esc(S.league.leagueName)}</h3>
+      <p class="sub">Anyone with the link sees the whole league history on any phone or computer${S.league.isPrivate ? ", no ESPN login needed" : ""}. Edit the message if you like.</p>
+      <label class="f" for="shareMsg">Message</label>
+      <textarea id="shareMsg" rows="8" class="sharemsg">${esc(text)}</textarea>
+      <div class="shareurl"><input type="text" readonly value="${esc(url)}" aria-label="League link" onclick="this.select()"><button class="btn small ghost" data-act="shareCopyLink">Copy link</button></div>
+      <div class="sharebtns">
+        ${navigator.share ? `<button class="btn" data-act="shareNative">Share…</button>` : ""}
+        <button class="btn ${navigator.share ? "ghost" : ""}" data-act="shareCopy">Copy message</button>
+        <a class="btn ghost" id="shareMail" href="mailto:?subject=${enc(subject)}&body=${enc(msg)}">Email</a>
+        <a class="btn ghost" id="shareSms" href="sms:?&body=${enc(msg)}">Text</a>
+      </div>
+      <p class="sub" style="margin-top:10px">Tip: posting it in your league's group chat works best. The link opens straight to your league.</p>`);
+  }
+
+  /* ---------------- talk smack ---------------- */
+  // Writes a smack line from a stat and hands it to Text / Email / the share sheet. The site
+  // never knows anyone's number: you pick the person in your app, or save their number or
+  // email once on this device (it stays in this browser only).
+  const first = (k) => name(k).split(/\s+/)[0];
+  const whenTxt = (g) => `${g.year} ${g.kind === "playoff" ? "playoffs" : "week " + g.week}`;
+  const nth = (i) => (i === 0 ? "the worst" : `#${i + 1}`);
+  const nthBest = (i) => (i === 0 ? "the best" : `#${i + 1}`);
+  function smackFor(ctx, d) {
+    const R = S.stats.records;
+    // to: who it's aimed at; flip: the other person (h2h / games), so it can be sent the other way
+    switch (ctx) {
+      case "h2h": {
+        const c = S.stats.h2h[d.a]?.[d.b]; if (!c) return null;
+        const me = d.a, to = d.b, W = c.w, L = c.l, T = c.t, r = rec(W, L, T), n = W + L + T;
+        const last = c.games[c.games.length - 1];
+        const lastTxt = last ? (() => { const my = last.a === me ? last.as : last.bs, th = last.a === me ? last.bs : last.as; return `${my > th ? "I won" : "You won"} the last one ${f1(my)}–${f1(th)} (${whenTxt(last)})`; })() : "";
+        const lines = W > L ? [
+          `${r} all-time against you, ${first(to)}. I own you.`,
+          `Friendly reminder, ${first(to)}: I'm ${r} lifetime against you. The receipts are public now.`,
+          `${n} games, ${W} wins for me. At this point you're my bye week, ${first(to)}.`,
+          `${r} head-to-head. ${lastTxt}. Some things never change.`,
+        ] : W < L ? [
+          `${r} lifetime against you, ${first(to)}. Enjoy it while it lasts.`,
+          `Down ${L}-${W} to you all-time. The revenge tour starts now, ${first(to)}.`,
+          `You've got me ${L}-${W}, ${first(to)}. Every streak ends. Yours is next.`,
+        ] : [
+          `Dead even at ${r} all-time, ${first(to)}. Next one settles it.`,
+          `${r} against you lifetime. Somebody has to break the tie, and it's going to be me.`,
+        ];
+        return { to, from: me, flip: { ctx: "h2h", a: d.b, b: d.a }, lines, view: "h2h" };
+      }
+      case "high": { const x = R.highScores[d.i]; return x && { to: x.op, from: x.me, lines: [
+        `Remember ${whenTxt(x)}, ${first(x.op)}? I hung ${f2(x.my)} on you. It's ${nthBest(d.i) === "the best" ? "the highest score" : nthBest(d.i) + " highest score"} in league history.`,
+        `${f2(x.my)} points. On you. ${whenTxt(x)}. Framed forever in the record book, ${first(x.op)}.`,
+        `Just checking in, ${first(x.op)}. ${f2(x.my)}–${f1(x.their)} (${whenTxt(x)}). That's all.`,
+      ], view: "records" }; }
+      case "low": { const x = R.lowScores[d.i]; return x && { to: x.me, from: x.op, lines: [
+        `${f2(x.my)} points in ${whenTxt(x)}, ${first(x.me)}. That's ${nth(d.i) === "the worst" ? "the lowest score" : nth(d.i) + " lowest score"} in league history. Forever.`,
+        `Hey ${first(x.me)}, the record book called. ${f2(x.my)} points (${whenTxt(x)}) is still up there.`,
+        `${f2(x.my)}. In a full game. ${whenTxt(x)}. Did you set your lineup, ${first(x.me)}?`,
+      ], view: "records" }; }
+      case "blowout": { const x = R.blowouts[d.i]; return x && { to: x.lose, from: x.win, lines: [
+        `${f1(x.ws)}–${f1(x.ls)}. A ${f1(x.ws - x.ls)}-point beatdown in ${whenTxt(x)}. Still sore, ${first(x.lose)}?`,
+        `${whenTxt(x)}: I beat you by ${f1(x.ws - x.ls)}, ${first(x.lose)}. ${d.i === 0 ? "Biggest blowout in league history." : `#${d.i + 1} biggest blowout ever.`}`,
+        `Mercy rule should've kicked in, ${first(x.lose)}. ${f1(x.ws)}–${f1(x.ls)}, ${whenTxt(x)}.`,
+      ], view: "records" }; }
+      case "closest": { const x = R.closest[d.i]; return x && { to: x.lose, from: x.win, lines: [
+        `Lost by ${f2(x.ws - x.ls)} in ${whenTxt(x)}, ${first(x.lose)}. One extra point. 😬`,
+        `${f2(x.ws)}–${f2(x.ls)}. ${whenTxt(x)}. Think about that bench decision every day, ${first(x.lose)}.`,
+        `A W is a W, ${first(x.lose)}. Even by ${f2(x.ws - x.ls)}.`,
+      ], view: "records" }; }
+      case "winStreak": { const x = R.winStreaks[d.i]; return x && { to: null, from: x.key, lines: [
+        `${x.len} straight wins (${whenTxt(x.from)} to ${whenTxt(x.to)}). Name a longer streak in this league. I'll wait.`,
+        `League record book: ${x.len}-game win streak, ${name(x.key).replace(/\.$/, "")}. Bow down.`,
+      ], view: "records" }; }
+      case "lossStreak": { const x = R.lossStreaks[d.i]; return x && { to: x.key, from: null, lines: [
+        `${x.len} losses in a row, ${first(x.key)} (${whenTxt(x.from)} to ${whenTxt(x.to)}). The record book says hi.`,
+        `${x.len} straight Ls, ${first(x.key)}. ${d.i === 0 ? "Longest losing streak in league history." : `#${d.i + 1} longest losing streak ever.`}`,
+        `Checking on you, ${first(x.key)}. ${x.len} losses in a row is a lot.`,
+      ], view: "records" }; }
+      case "bestSeason": { const x = R.bestSeasons[d.i]; return x && { to: null, from: x.key, lines: [
+        `${rec(x.w, x.l, x.t)} in ${x.year}. ${d.i === 0 ? "Best regular season in league history." : `#${d.i + 1} best regular season ever.`} Just saying.`,
+        `${x.year}: ${rec(x.w, x.l, x.t)}, ${f1(x.pf)} points. Some of us peaked. Some of us are still peaking.`,
+      ], view: "records" }; }
+      case "mostPts": { const x = R.mostPointsSeasons[d.i]; return x && { to: null, from: x.key, lines: [
+        `${f1(x.pfPg)} points a game in ${x.year}. ${d.i === 0 ? "Highest-scoring season in league history." : `#${d.i + 1} highest-scoring season ever.`}`,
+        `${x.year}: ${f1(x.pfPg)} per game. The record book has my name on it.`,
+      ], view: "records" }; }
+      case "fewestPts": { const x = R.fewestPointsSeasons[d.i]; return x && { to: x.key, from: null, lines: [
+        `${f1(x.pfPg)} points a game in ${x.year}, ${first(x.key)}. ${d.i === 0 ? "Lowest-scoring season in league history." : `#${d.i + 1} lowest-scoring season ever.`}`,
+        `${x.year} called, ${first(x.key)}. It wants its ${f1(x.pfPg)} points per game back.`,
+        `Reminder, ${first(x.key)}: ${f1(x.pfPg)} PPG in ${x.year}. It's in the record book. Forever.`,
+      ], view: "records" }; }
+    }
+    return null;
+  }
+  const smackBtn = (ctx, i) => `<button class="smackbtn" data-act="smack" data-ctx="${ctx}" data-i="${i}" title="Talk smack about this" aria-label="Talk smack about this">🗣</button>`;
+  const contactKey = (k) => `flha:contact:${S.league.slug}:${k}`;
+  function smackUrl(view) { return shareUrl(S.league) + (view ? "/" + view : ""); }
+  function smackDlg(ctx, d, lineIdx = 0) {
+    const sm = smackFor(ctx, d); if (!sm || !sm.lines.length) return toast("Nothing to talk smack about here yet.");
+    const i = ((lineIdx % sm.lines.length) + sm.lines.length) % sm.lines.length;
+    S.smack = { ctx, d, i, sm };
+    const to = sm.to, c = to ? store.get(contactKey(to), {}) : {};
+    const body = `${sm.lines[i]}\n\nSee for yourself: ${smackUrl(sm.view)}`;
+    openDlg(`<h3>🗣 Talk smack${to ? ` to ${esc(name(to))}` : ""}</h3>
+      <p class="sub">${to ? `Pick ${esc(first(to))} in your texts or email, or save their number below so it fills in next time.` : "This one's a brag. Send it to the league chat."}</p>
+      <textarea id="smackMsg" rows="5" class="sharemsg">${esc(body)}</textarea>
+      <div class="actions" style="margin-top:8px"><button class="btn ghost small" data-act="smackNext">🎲 Another line</button>${sm.flip ? `<button class="btn ghost small" data-act="smackFlip">⇄ Send it to ${esc(name(sm.flip.b))} instead</button>` : ""}</div>
+      <div class="sharebtns">
+        <a class="btn" id="smackSms" href="#">Text</a>
+        <a class="btn ghost" id="smackMail" href="#">Email</a>
+        ${navigator.share ? `<button class="btn ghost" data-act="smackShare">Share…</button>` : ""}
+        <button class="btn ghost" data-act="smackCopy">Copy</button>
+      </div>
+      ${to ? `<details class="howto" ${c.phone || c.email ? "" : ""}><summary>${c.phone || c.email ? `Sending to ${esc([c.phone, c.email].filter(Boolean).join(" · "))}` : `Save ${esc(first(to))}'s number or email (this device only)`}</summary>
+        <label class="f" for="smackPhone">Phone</label><input type="text" id="smackPhone" inputmode="tel" autocomplete="off" value="${esc(c.phone || "")}" placeholder="480-555-0123">
+        <label class="f" for="smackEmail">Email</label><input type="text" id="smackEmail" inputmode="email" autocomplete="off" value="${esc(c.email || "")}">
+        <p class="sub" style="margin-top:6px">Saved only in this browser, never on our server or shared with the league.</p></details>` : ""}`);
+    smackLinks();
+  }
+  function smackLinks() {
+    const sm = S.smack?.sm; if (!sm) return;
+    const msg = $("smackMsg")?.value || "", enc = encodeURIComponent;
+    const phone = ($("smackPhone")?.value || "").replace(/[^\d+]/g, ""), email = ($("smackEmail")?.value || "").trim();
+    if (sm.to) store.set(contactKey(sm.to), { phone: $("smackPhone")?.value.trim() || "", email });
+    $("smackSms").href = `sms:${phone}?&body=${enc(msg)}`;
+    $("smackMail").href = `mailto:${encodeURI(email)}?subject=${enc(`${S.league.leagueName}: the record book has something to say`)}&body=${enc(msg)}`;
   }
 
   /* ---------------- in-page navigation with Back ---------------- */
@@ -482,14 +671,15 @@
     const rows = list.map((m) => {
       const fin = m.finishes, n = (r) => fin.filter((f) => f.rank === r).length;
       const by = Object.fromEntries((m.lines || []).filter((l) => l.complete).map((l) => [l.year, l]));
-      return { m, firsts: n(1), seconds: n(2), thirds: n(3), top3: fin.filter((f) => f.rank <= 3).length, played: fin.length,
+      return { m, firsts: n(1), seconds: n(2), thirds: n(3), pts: 3 * n(1) + 2 * n(2) + n(3), top3: fin.filter((f) => f.rank <= 3).length, played: fin.length,
         playoffs: m.playoffs, lasts: m.lasts, avg: m.avgFinish, by };
     });
     const { key, asc } = S.fsort, dir = asc ? 1 : -1;
-    const medals = (a, b) => b.firsts - a.firsts || b.seconds - a.seconds || b.thirds - a.thirds || (a.avg ?? 99) - (b.avg ?? 99);
-    const val = { name: (r) => r.m.name.toLowerCase(), firsts: (r) => r.firsts, seconds: (r) => r.seconds, thirds: (r) => r.thirds,
+    // default order: podium points (1st = 3, 2nd = 2, 3rd = 1), then better average finish, then more titles
+    const medals = (a, b) => b.pts - a.pts || (a.avg ?? 99) - (b.avg ?? 99) || b.firsts - a.firsts;
+    const val = { pts: (r) => r.pts, name: (r) => r.m.name.toLowerCase(), firsts: (r) => r.firsts, seconds: (r) => r.seconds, thirds: (r) => r.thirds,
       top3: (r) => r.played ? r.top3 / r.played : 0, playoffs: (r) => r.played ? r.playoffs / r.played : 0, lasts: (r) => r.lasts, avg: (r) => r.avg ?? 99 }[key];
-    rows.sort((a, b) => key === "medals" ? medals(a, b) * (asc ? -1 : 1) : ((val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir || medals(a, b)));
+    rows.sort((a, b) => key === "pts" ? medals(a, b) * (asc ? -1 : 1) : ((val(a) < val(b) ? -1 : val(a) > val(b) ? 1 : 0) * dir || medals(a, b)));
     const th = (k, label, cls = "") => `<th class="sort ${cls} ${key === k ? "sorted" + (asc ? " asc" : "") : ""}" data-act="fsort" data-k="${k}">${label}</th>`;
     const pctTxt = (a, b) => b ? `${a} <span class="avg">(${Math.round((a / b) * 100)}%)</span>` : "—";
     const box = (r, y) => {
@@ -499,12 +689,12 @@
       return `<span class="fbox ${k}" data-act="roster" data-year="${y}" data-k="${esc(r.m.key)}" title="${y}: ${ord(l.finalRank)} of ${l.teamCount}${l.playoffs ? " (made playoffs)" : ""}. Tap for the roster.">${l.finalRank}</span>`;
     };
     return `<h2>All-time finishes</h2>
-      <p class="sub" style="margin-top:-4px">Ranked by titles, then 2nd-place finishes, then 3rd (tap a column to sort another way). Finished seasons only. The strip shows every season's final place, oldest to newest.</p>
+      <p class="sub" style="margin-top:-4px">Ranked by podium points: 3 for a title, 2 for 2nd, 1 for 3rd. Ties go to the better average finish. Tap a column to sort another way. Finished seasons only. The strip shows every season's final place, oldest to newest.</p>
       <div class="scroll"><table class="compact">
-        <thead><tr>${th("name", "Manager", "l")}${th("firsts", "🏆 1st")}${th("seconds", "2nd")}${th("thirds", "3rd")}${th("top3", "Top 3")}${th("playoffs", "Playoffs")}${th("lasts", "Last")}${th("avg", "Avg<br>finish")}<th class="l">Finish each season<br><span class="avg">${years[0] ?? ""}–${years[years.length - 1] ?? ""}</span></th></tr></thead>
+        <thead><tr>${th("name", "Manager", "l")}${th("pts", "Pts")}${th("firsts", "🏆 1st")}${th("seconds", "2nd")}${th("thirds", "3rd")}${th("top3", "Top 3")}${th("playoffs", "Playoffs")}${th("lasts", "Last")}${th("avg", "Avg<br>finish")}<th class="l">Finish each season<br><span class="avg">${years[0] ?? ""}–${years[years.length - 1] ?? ""}</span></th></tr></thead>
         <tbody>${rows.map((r) => `<tr class="clickable" data-act="gotoRival" data-k="${esc(r.m.key)}">
           <td class="l mgr">${esc(r.m.name)}<span class="tn">${r.played} finished season${r.played === 1 ? "" : "s"}</span></td>
-          <td class="num ${r.firsts ? "trophy" : "muted"}">${r.firsts}</td><td class="num ${r.seconds ? "" : "muted"}">${r.seconds}</td><td class="num ${r.thirds ? "" : "muted"}">${r.thirds}</td>
+          <td class="num"><b>${r.pts}</b></td><td class="num ${r.firsts ? "trophy" : "muted"}">${r.firsts}</td><td class="num ${r.seconds ? "" : "muted"}">${r.seconds}</td><td class="num ${r.thirds ? "" : "muted"}">${r.thirds}</td>
           <td class="num">${pctTxt(r.top3, r.played)}</td><td class="num">${pctTxt(r.playoffs, r.played)}</td><td class="num ${r.lasts ? "" : "muted"}">${r.lasts}</td>
           <td class="num"><b>${f2(r.avg)}</b></td><td class="l"><span class="fstrip">${years.map((y) => box(r, y)).join("")}</span></td></tr>`).join("")}</tbody></table></div>
       <p class="sub" style="margin-top:8px">Strip key: <span class="fbox c1">1</span> champion · <span class="fbox c3">2</span> 2nd or 3rd · <span class="fbox cp">5</span> made playoffs · <span class="fbox">8</span> missed playoffs · <span class="fbox cl">12</span> last place · <span class="fbox none">·</span> not in the league. Tap a box for that season's roster.</p>`;
@@ -628,7 +818,7 @@
           const open = S.openOpp === x.op;
           return `<tr class="clickable" data-act="openOpp" data-k="${esc(x.op)}"><td class="l mgr">${open ? "▾" : "▸"} ${esc(name(x.op))}</td><td class="num">${x.gp}</td><td class="num">${rec(x.w, x.l, x.t)}</td>
             <td class="num ${x.pct > .5 ? "pos" : x.pct < .5 ? "neg" : ""}">${pct(x.pct)}</td><td class="num">${f1(x.pfPg)}</td><td class="num">${f1(x.paPg)}</td><td class="l">${lm}</td></tr>
-            ${open ? `<tr><td colspan="7" class="l" style="background:var(--surface2);padding:6px 12px 10px 28px;white-space:normal"><div class="glog">${[...x.games].reverse().map((g) => gameChip(g, m.key)).join("")}</div></td></tr>` : ""}`;
+            ${open ? `<tr><td colspan="7" class="l" style="background:var(--surface2);padding:6px 12px 10px 28px;white-space:normal"><div class="actions" style="margin:2px 0 8px"><button class="btn small" data-act="smack" data-ctx="h2h" data-a="${esc(m.key)}" data-b="${esc(x.op)}">🗣 Talk smack to ${esc(name(x.op))}</button></div><div class="glog">${[...x.games].reverse().map((g) => gameChip(g, m.key)).join("")}</div></td></tr>` : ""}`;
         }).join("")}</tbody></table></div>`;
   }
 
@@ -659,28 +849,28 @@
     const wk = (g) => `${g.year} ${g.kind === "playoff" ? "playoffs" : "wk " + g.week}`;
     const five = (a) => a.slice(0, 5);
     return `<div class="recgrid">
-      ${panel("Highest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th>`,
-        five(R.highScores).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td></tr>`).join(""))}
-      ${panel("Lowest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th>`,
-        five(R.lowScores).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td></tr>`).join(""))}
-      ${panel("Biggest blowouts", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th>`,
-        five(R.blowouts).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f1(x.ws)}–${f1(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
-      ${panel("Closest games", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th>`,
-        five(R.closest).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f2(x.ws)}–${f2(x.ls)}</span></td><td class="l">${wk(x)}</td></tr>`).join(""))}
-      ${panel("Longest winning streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th>`,
-        five(R.winStreaks).map((x) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
-      ${panel("Longest losing streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th>`,
-        five(R.lossStreaks).map((x) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td></tr>`).join(""))}
-      ${panel("Best regular seasons", `<th class="l">Manager</th><th>Record</th><th>Year</th><th>PF</th>`,
-        five(R.bestSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${tot(x.pf, x.g)}</td></tr>`).join(""))}
-      ${panel("Highest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
-        five(R.mostPointsSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
-      ${panel("Lowest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th>`,
-        five(R.fewestPointsSeasons).map((x) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td></tr>`).join(""))}
+      ${panel("Highest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th><th aria-label="Talk smack"></th>`,
+        five(R.highScores).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td><td class="sm">${smackBtn("high", i)}</td></tr>`).join(""))}
+      ${panel("Lowest single-game scores", `<th class="l">Manager</th><th>Points</th><th class="l">When</th><th class="l">Opponent</th><th aria-label="Talk smack"></th>`,
+        five(R.lowScores).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.me)}</td><td class="num"><b>${f2(x.my)}</b></td><td class="l">${wk(x)}</td><td class="l">${rlink(x.year, x.op)} (${f1(x.their)})</td><td class="sm">${smackBtn("low", i)}</td></tr>`).join(""))}
+      ${panel("Biggest blowouts", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th><th aria-label="Talk smack"></th>`,
+        five(R.blowouts).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f1(x.ws)}–${f1(x.ls)}</span></td><td class="l">${wk(x)}</td><td class="sm">${smackBtn("blowout", i)}</td></tr>`).join(""))}
+      ${panel("Closest games", `<th class="l">Winner</th><th>Margin</th><th class="l">Loser</th><th class="l">When</th><th aria-label="Talk smack"></th>`,
+        five(R.closest).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.win)}</td><td class="num"><b>${f2(x.ws - x.ls)}</b></td><td class="l">${rlink(x.year, x.lose)} <span class="muted">${f2(x.ws)}–${f2(x.ls)}</span></td><td class="l">${wk(x)}</td><td class="sm">${smackBtn("closest", i)}</td></tr>`).join(""))}
+      ${panel("Longest winning streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th><th aria-label="Talk smack"></th>`,
+        five(R.winStreaks).map((x, i) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td><td class="sm">${smackBtn("winStreak", i)}</td></tr>`).join(""))}
+      ${panel("Longest losing streaks", `<th class="l">Manager</th><th>Games</th><th class="l">From</th><th class="l">To</th><th aria-label="Talk smack"></th>`,
+        five(R.lossStreaks).map((x, i) => `<tr><td class="l mgr">${rlink(x.to.year, x.key)}</td><td class="num"><b>${x.len}</b></td><td class="l">${wk(x.from)}</td><td class="l">${wk(x.to)}</td><td class="sm">${smackBtn("lossStreak", i)}</td></tr>`).join(""))}
+      ${panel("Best regular seasons", `<th class="l">Manager</th><th>Record</th><th>Year</th><th>PF</th><th aria-label="Talk smack"></th>`,
+        five(R.bestSeasons).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${rec(x.w, x.l, x.t)}</b></td><td class="num">${x.year}</td><td class="num">${tot(x.pf, x.g)}</td><td class="sm">${smackBtn("bestSeason", i)}</td></tr>`).join(""))}
+      ${panel("Highest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th><th aria-label="Talk smack"></th>`,
+        five(R.mostPointsSeasons).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td><td class="sm">${smackBtn("mostPts", i)}</td></tr>`).join(""))}
+      ${panel("Lowest-scoring seasons", `<th class="l">Manager</th><th>PF / game</th><th>Year</th><th>Record</th><th aria-label="Talk smack"></th>`,
+        five(R.fewestPointsSeasons).map((x, i) => `<tr><td class="l mgr">${rlink(x.year, x.key)}</td><td class="num"><b>${f1(x.pfPg)}</b></td><td class="num">${x.year}</td><td class="num">${rec(x.w, x.l, x.t)}</td><td class="sm">${smackBtn("fewestPts", i)}</td></tr>`).join(""))}
       ${panel("Highest combined scores", `<th class="l">Game</th><th>Total</th><th class="l">When</th>`,
         five(R.highCombined).map((x) => `<tr><td class="l">${rlink(x.year, x.a)} ${f1(x.as)} – ${f1(x.bs)} ${rlink(x.year, x.b)}</td><td class="num"><b>${f1(x.as + x.bs)}</b></td><td class="l">${wk(x)}</td></tr>`).join(""))}
     </div>
-    <p class="sub" style="margin-top:10px">Regular season and playoff games; consolation games are left out. Streaks carry over from one season to the next. Tap a name for that team's roster that season.</p>`;
+    <p class="sub" style="margin-top:10px">Regular season and playoff games; consolation games are left out. Streaks carry over from one season to the next. Tap a name for that team's roster that season. Tap 🗣 to talk smack about it.</p>`;
   }
 
   function matchup(g, tn, year) {
@@ -1245,17 +1435,25 @@
           const A = a.dataset.a, B = a.dataset.b, c = S.stats.h2h[A][B];
           return openDlg(`<h3>${esc(name(A))} vs ${esc(name(B))}</h3>
             <p class="sub">${esc(name(A))} is ${rec(c.w, c.l, c.t)} · averages ${f1(c.pf / c.games.length)} to ${f1(c.pa / c.games.length)}</p>
+            <div class="actions" style="margin:0 0 10px"><button class="btn small" data-act="smack" data-ctx="h2h" data-a="${esc(A)}" data-b="${esc(B)}">🗣 Talk smack</button></div>
             <div class="scroll"><table>${[...c.games].reverse().map((g) => gameLine(g, A)).join("")}</table></div>`);
         }
-        case "share": {
-          const url = shareUrl(S.league);
-          if (navigator.share) { try { await navigator.share({ title: `${S.league.leagueName} · league history`, url }); return; } catch (err) { if (err?.name === "AbortError") return; } }
-          try { await navigator.clipboard.writeText(url); toast("Link copied. Paste it in your league chat."); }
-          catch {
-            S.showShare = true; render();
-            const i = $("shareUrl"); i?.focus(); i?.select();
-            toast("Copy the link from the box.");
-          }
+        case "share": return shareDlg();
+        case "smack": return smackDlg(a.dataset.ctx, { a: a.dataset.a, b: a.dataset.b, i: Number(a.dataset.i) });
+        case "smackNext": return smackDlg(S.smack.ctx, S.smack.d, S.smack.i + 1);
+        case "smackFlip": return smackDlg(S.smack.sm.flip.ctx, S.smack.sm.flip, 0);
+        case "smackShare": { try { await navigator.share({ text: $("smackMsg").value }); } catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy instead."); } return; }
+        case "smackCopy": { try { await navigator.clipboard.writeText($("smackMsg").value); toast("Copied. Paste it wherever it hurts most."); } catch { $("smackMsg").select(); toast("Copy it from the box."); } return; }
+        case "shareNative": {
+          const { subject, text, url } = shareParts();
+          try { await navigator.share({ title: subject, text, url }); } catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy message instead."); }
+          return;
+        }
+        case "shareCopy": case "shareCopyLink": {
+          const { msg, url } = shareParts();
+          const v = act === "shareCopy" ? msg : url;
+          try { await navigator.clipboard.writeText(v); toast(act === "shareCopy" ? "Message copied. Paste it in your league chat." : "Link copied."); }
+          catch { const t = $("shareMsg"); t?.focus(); t?.select(); toast("Copy it from the box."); }
           return;
         }
         case "hideShare": S.showShare = false; return render();
@@ -1335,6 +1533,13 @@
   });
   // Overview slider: update the label while dragging, redraw when let go
   document.addEventListener("input", (e) => {
+    if (["smackMsg", "smackPhone", "smackEmail"].includes(e.target.id)) return smackLinks();
+    if (e.target.id === "shareMsg") {
+      const { subject, msg } = shareParts(), enc = encodeURIComponent;
+      $("shareMail").href = `mailto:?subject=${enc(subject)}&body=${enc(msg)}`;
+      $("shareSms").href = `sms:?&body=${enc(msg)}`;
+      return;
+    }
     if (e.target.id !== "minSeasons") return;
     const v = Number(e.target.value), M = S.stats.managers;
     $("minSeasonsN").textContent = v; $("minSeasonsS").textContent = v === 1 ? "" : "s";

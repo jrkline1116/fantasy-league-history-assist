@@ -39,6 +39,8 @@ Website: https://fantasyleaguehistoryassist.com/ (once the domain is pointed her
 
 ```
 index.html / app.js / app.css       the site (GitHub Pages, no build step)
+privacy.html                        privacy policy (needed for AdSense)
+robots.txt / sitemap.xml            for Google search
 demo.js                             made-up demo league (#demo)
 config.js                           Supabase URL + publishable key (safe to publish)
 supabase/setup.sql                  the one database table (run once)
@@ -96,6 +98,24 @@ Site changes: edit, push to `main`, live in about a minute.
 Function or `_shared` changes: `npx supabase functions deploy league-history --no-verify-jwt`.
 (`flh-data.js` is used by both, so changing it means push and redeploy.)
 
+## Sharing
+
+- **Share** opens a ready-made message (league name, years, reigning champ, most titles, best average finish) that you can edit, plus the link. Buttons: Share… (phone/computer share sheet), Copy message, Email (subject and body filled in), Text, Copy link.
+- Link previews in group chats, texts, Slack and Discord use `icons/og-image.png` (1200×630). Previews are the same for every league: chat apps never see the part after the `#`.
+
+## Talk smack
+
+- **🗣 Talk smack** on every Record Book row, in the Head-to-Head game list (tap a cell), and on each opponent's game list on a Teams page.
+- It writes a line from that stat (lowest score, blowout, losing streak, head-to-head record…) aimed at the right person, with 🎲 for another line and ⇄ to send a head-to-head one the other way. The message ends with a link straight to that tab (`#slug/records` or `#slug/h2h`).
+- Send by Text, Email, the share sheet, or Copy. The site never knows anyone's number: you pick them in your app, or save their phone/email once (kept in that browser only, never on the server).
+
+## Google search and ads
+
+- `robots.txt` points Google at `sitemap.xml` (home page + privacy page). League pages live after the `#`, which Google ignores, so shared leagues never show up in search.
+- `privacy.html` is the privacy policy AdSense requires (linked in the footer).
+- Ads: put your AdSense publisher ID in `config.js` (`ADSENSE_CLIENT`). With only that, AdSense Auto ads places ads. Add ad unit slot IDs (`ADSENSE_SLOTS`) for fixed banners: top (under the tabs), bottom (above the footer), side (tall ads in the margins on screens 1480px+ wide). Blank = no ads.
+- `ads.txt` (create once AdSense gives you your ID): `google.com, pub-XXXXXXXXXXXXXXXX, DIRECT, f08c47fec0942fa0`
+
 ## Handy SQL
 
 ```
@@ -114,6 +134,7 @@ select platform, is_private, count(*) from flha_leagues group by 1, 2;
 - **W-L-T, PF, PA:** regular season head-to-head games. Median-score wins on Sleeper affect seeding but aren't head-to-head games, so they aren't in W-L.
 - **Head-to-head / Teams page rivals:** regular season plus winners-bracket playoff games (toggle on the Head-to-Head tab). Consolation games are left out everywhere.
 - **All-play %:** your record if you'd played every team every week. **Luck** = win % minus all-play %.
+- **All-time finishes order:** podium points (3 for a title, 2 for 2nd, 1 for 3rd), ties broken by better average finish, then titles.
 - **Streaks** run across seasons.
 - **Still on roster at season end:** share of a manager's draft picks on their final roster (finished seasons only).
 - **Adds / Drops / Waiver claims:** completed waiver and free-agent moves (failed claims aren't counted). Players received in trades aren't adds.
