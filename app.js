@@ -447,6 +447,7 @@
         <button class="btn ${navigator.share ? "ghost" : ""}" data-act="shareCopy">Copy message</button>
         <a class="btn ghost" id="shareMail" href="mailto:?subject=${enc(subject)}&body=${enc(msg)}">Email</a>
         <a class="btn ghost" id="shareSms" href="sms:?&body=${enc(msg)}">Text</a>
+        <button class="btn ghost" data-act="messenger" data-src="share">Messenger</button>
       </div>
       <p class="sub" style="margin-top:10px">Tip: posting it in your league's group chat works best. The link opens straight to your league.</p>`);
   }
@@ -559,6 +560,7 @@
         <a class="btn" id="smackSms" href="#">Text</a>
         <a class="btn ghost" id="smackMail" href="#">Email</a>
         ${navigator.share ? `<button class="btn ghost" data-act="smackShare">Share…</button>` : ""}
+        <button class="btn ghost" data-act="messenger" data-src="smack">Messenger</button>
         <button class="btn ghost" data-act="smackCopy">Copy</button>
       </div>
       ${to ? `<details class="howto" ${c.phone || c.email ? "" : ""}><summary>${c.phone || c.email ? `Sending to ${esc([c.phone, c.email].filter(Boolean).join(" · "))}` : `Save ${esc(first(to))}'s number or email (this device only)`}</summary>
@@ -1472,6 +1474,25 @@
         case "smackNext": return smackDlg(S.smack.ctx, S.smack.d, S.smack.i + 1);
         case "smackFlip": return smackDlg(S.smack.sm.flip.ctx, S.smack.sm.flip, 0);
         case "smackShare": { try { await navigator.share({ text: $("smackMsg").value }); } catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy instead."); } return; }
+        case "messenger": {
+          // Messenger has no "send this text" link, so copy the whole message first, then open Messenger to paste it.
+          // Phones: the Messenger app's share link (sends the league link with its preview). Computers: messenger.com.
+          const smack = a.dataset.src === "smack";
+          const msg = smack ? $("smackMsg").value : shareParts().msg;
+          const url = (msg.match(/https?:\/\/\S+/g) || []).pop() || shareUrl(S.league);
+          let copied = false;
+          try { await navigator.clipboard.writeText(msg); copied = true; } catch { /* clipboard blocked */ }
+          const phone = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform));
+          if (phone) {
+            toast(copied ? "Message copied. Pick the chat, then paste it." : "Opening Messenger…");
+            location.href = `fb-messenger://share/?link=${encodeURIComponent(url)}`;
+            setTimeout(() => { if (document.visibilityState === "visible") toast(copied ? "Messenger app didn't open. The message is copied: paste it in Messenger." : "Messenger app didn't open. Use Copy, then paste it in Messenger."); }, 1800);
+          } else {
+            window.open("https://www.messenger.com/", "_blank", "noopener");
+            toast(copied ? "Message copied. Open your league chat in Messenger and paste (Ctrl+V)." : "Use Copy, then paste it in your Messenger chat.");
+          }
+          return;
+        }
         case "smackCopy": { try { await navigator.clipboard.writeText($("smackMsg").value); toast("Copied. Paste it wherever it hurts most."); } catch { $("smackMsg").select(); toast("Copy it from the box."); } return; }
         case "shareNative": {
           const { subject, text, url } = shareParts();
