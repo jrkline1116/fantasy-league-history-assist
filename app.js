@@ -1473,7 +1473,15 @@
         case "smack": return smackDlg(a.dataset.ctx, { a: a.dataset.a, b: a.dataset.b, i: Number(a.dataset.i) });
         case "smackNext": return smackDlg(S.smack.ctx, S.smack.d, S.smack.i + 1);
         case "smackFlip": return smackDlg(S.smack.sm.flip.ctx, S.smack.sm.flip, 0);
-        case "smackShare": { try { await navigator.share({ text: $("smackMsg").value }); } catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy instead."); } return; }
+        case "smackShare": {
+          // Same shape as the main Share (title + text + url), so the share menu offers the same apps (X, Facebook, Gmail, Discord…).
+          // Sharing text alone hides the link-sharing apps.
+          const msg = $("smackMsg").value, url = (msg.match(/https?:\/\/\S+/g) || []).pop() || shareUrl(S.league);
+          const text = msg.replace(url, "").trim();
+          try { await navigator.share({ title: `${S.league.leagueName}: the record book has something to say`, text, url }); }
+          catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy instead."); }
+          return;
+        }
         case "messenger": {
           // Messenger has no "send this text" link, so copy the whole message first, then open Messenger to paste it.
           // Phones: the Messenger app's share link (sends the league link with its preview). Computers: messenger.com.
