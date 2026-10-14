@@ -396,7 +396,16 @@
         <details><summary>What stats does it show?</summary><p>All-time standings and record, average finish, titles, playoff trips, points for and against (with per-game averages), head-to-head records against every manager, all-play record and luck, the league record book, every draft, final rosters, trades and waiver pickups.</p></details>
         <details><summary>A leaguemate changed accounts. Can I combine them?</summary><p>Yes. Open Managers, then merge the old account into the new one. Their records combine, and the change shows for everyone with the link (and can be undone).</p></details>
         <details><summary>Is it free?</summary><p>Yes, free for Sleeper and ESPN leagues. It isn't affiliated with ESPN or Sleeper.</p></details>
-      </section>`;
+      </section>
+
+      <section class="guidelinks"><h2>Guides</h2><ul>
+        <li><a href="guides/find-espn-league-id.html">How to find your ESPN league ID</a></li>
+        <li><a href="guides/private-espn-league.html">Loading a private ESPN league</a></li>
+        <li><a href="guides/sleeper-league-history.html">How Sleeper league history works</a></li>
+        <li><a href="guides/all-play-record-luck.html">All-play record and luck, explained</a></li>
+        <li><a href="guides/fantasy-league-stats-glossary.html">League history stats glossary</a></li>
+        <li><a href="guides/fantasy-league-record-book.html">What belongs in a league record book</a></li>
+      </ul></section>`;
   }
 
   /* ---------------- sharing ---------------- */

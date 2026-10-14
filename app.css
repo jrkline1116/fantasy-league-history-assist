@@ -323,3 +323,35 @@ td.sm{width:34px;padding-left:0!important;padding-right:6px!important}
 .card .who .mlink{font:inherit}
 .smackhint{font-size:.8em;opacity:.7}
 .card .who .smackbtn{font-size:.85rem;vertical-align:3px;margin-left:4px}
+
+/* content pages (guides, about, contact, privacy) */
+.h1{font:700 1.5rem/1 var(--cond);letter-spacing:.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sitenav{display:flex;align-items:center;gap:14px;flex:none;font-weight:600;font-size:.95rem}
+.sitenav a:not(.btn){text-decoration:none}
+.sitenav .btn{text-decoration:none}
+@media (max-width:560px){.h1{font-size:1.15rem}.sitenav .btn{display:none}}
+.doc{max-width:760px}
+.doc h2{margin-top:28px}
+.doc p,.doc li,.doc dd{font-size:1rem;line-height:1.6}
+.doc ul,.doc ol{padding-left:22px}
+.doc li{margin:4px 0}
+.doc code{font:.9em ui-monospace,SFMono-Regular,Consolas,monospace;background:var(--surface2);border:1px solid var(--line);border-radius:4px;padding:1px 4px;overflow-wrap:anywhere}
+.doc-title{font:700 2rem/1.1 var(--cond);margin:6px 0 6px;white-space:normal}
+.crumbs{font-size:.85rem;color:var(--muted);margin-top:6px}
+.crumbs a{color:var(--muted)}
+.gloss dt{font-weight:700;margin-top:14px}
+.gloss dd{margin:2px 0 0;color:var(--ink)}
+.doc-table{border-collapse:collapse;width:100%;font-size:.93rem;background:var(--surface);border:1px solid var(--line);border-radius:8px}
+.doc-table th,.doc-table td{padding:8px 10px;border-bottom:1px solid var(--line);text-align:right;white-space:nowrap}
+.doc-table .l{text-align:left}
+.doc .scroll{overflow-x:auto}
+.cta{margin:30px 0 8px;line-height:1.55}
+.cta .btn{margin-left:6px;text-decoration:none;display:inline-block;margin-top:6px}
+.gcards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:12px;margin-top:16px}
+.gcard{display:block;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:14px;text-decoration:none;color:var(--ink)}
+.gcard:hover{border-color:var(--brand)}
+.gcard b{display:block;font:700 1.1rem/1.15 var(--cond);letter-spacing:.02em;color:var(--brand);margin-bottom:4px}
+.gcard span{font-size:.9rem;color:var(--muted)}
+.guidelinks{margin-top:26px}
+.guidelinks ul{columns:2 260px;padding-left:20px}
+.guidelinks li{margin:4px 0}
