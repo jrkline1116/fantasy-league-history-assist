@@ -112,10 +112,13 @@
   function setupAds() {
     const client = String(CFG.ADSENSE_CLIENT || "").trim();
     if (!/^ca-pub-\d{10,20}$/.test(client)) return;
-    const sc = document.createElement("script");
-    sc.async = true; sc.crossOrigin = "anonymous";
-    sc.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
-    document.head.appendChild(sc);
+    // index.html already has the AdSense script in <head> (needed for site verification); add it only if missing
+    if (!document.querySelector('script[src*="adsbygoogle.js"]')) {
+      const sc = document.createElement("script");
+      sc.async = true; sc.crossOrigin = "anonymous";
+      sc.src = `https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=${client}`;
+      document.head.appendChild(sc);
+    }
     const slots = CFG.ADSENSE_SLOTS || {};
     const unit = (id, slot, fmt) => {
       const box = $(id); if (!box || !slot) return;

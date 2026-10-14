@@ -10,6 +10,6 @@ window.FLH_CONFIG = {
   // With only the client filled in, AdSense "Auto ads" places ads itself (turn it on in AdSense → Ads → By site).
   // Fill in slot IDs (AdSense → Ads → By ad unit → Display ads → copy data-ad-slot) for fixed banners:
   //   top: under the tabs · bottom: above the footer · side: tall ads in the margins on wide screens
-  ADSENSE_CLIENT: "",
+  ADSENSE_CLIENT: "ca-pub-5134360334819238",
   ADSENSE_SLOTS: { top: "", bottom: "", side: "" },
 };
