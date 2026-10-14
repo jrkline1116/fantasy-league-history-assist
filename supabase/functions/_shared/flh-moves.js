@@ -8,12 +8,13 @@
 //   rost:  { managerKey: [{ p, s }] }                   final roster; s = "s" starter, "b" bench, "r" IR, "t" taxi
 //   tx:    [{ t: "trade", w, at, sides: [{ k, get: [p], picks: [{ y, r, o }], faab }] }
 //           { t: "waiver"|"fa", w, at, k, add: [p], drop: [p], bid? }]
-//   tc:    { managerKey: [adds, drops, trades, faabSpent] }   ESPN's own season totals (every year, even before 2019)
+//   tc:    { managerKey: [adds, drops, trades, faabSpent] }   ESPN's own season totals (every year, even before 2018)
 //   faab:  true when the league bid on waivers
 //   mv:    MOVES_V once fetched (-1 = gave up after repeated failures)
 (function (root) {
   const SLEEPER = "https://api.sleeper.app/v1";
-  const MOVES_V = 1;
+  // 2: ESPN trades rebuilt from rosters when ESPN no longer has the player list; ESPN moves from 2018
+  const MOVES_V = 2;
   const C = () => root.FLHCore;
 
   async function pool(items, n, fn) {
@@ -215,7 +216,7 @@
     for (const p of missing) if (!pl[p]) pl[p] = [`Player ${p}`, ""];
   }
 
-  const TX_FILTER = JSON.stringify({ transactions: { filterType: { value: ["FREEAGENT", "WAIVER", "TRADE_ACCEPT", "TRADE_PROPOSAL", "TRADE_UPHOLD"] } } });
+  const TX_FILTER = JSON.stringify({ transactions: { filterType: { value: ["FREEAGENT", "WAIVER", "TRADE_ACCEPT", "TRADE_PROPOSAL", "TRADE_UPHOLD", "TRADE_VETO"] } } });
 
   async function espnMoves(id, year, creds, opts) {
     const d = await C().espnSeason(id, year, creds, "view=mTeam&view=mRoster&view=mDraftDetail&view=mSettings&view=mStatus");
@@ -259,48 +260,115 @@
       };
     }
 
-    // ESPN keeps move-by-move history from 2019 on
+    // ESPN keeps move-by-move history from 2018 on (earlier seasons only have final rosters and season totals)
     const tx = [];
-    if (year >= 2019) {
+    if (year >= 2018) {
       const live = d.status?.isActive && !(d.status?.finalScoringPeriod && d.status?.latestScoringPeriod > d.status.finalScoringPeriod);
       const last = Math.min(18, Number(live ? (d.status?.latestScoringPeriod || d.scoringPeriodId) : (d.status?.finalScoringPeriod || 17)) || 17);
       const periods = Array.from({ length: last + 1 }, (_, i) => i);   // 0 = before week 1
+      const base = `/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${id}`;
       const lists = await pool(periods, 6, async (w) => {
         try {
-          const r = await C().espnGet(`/apis/v3/games/ffl/seasons/${year}/segments/0/leagues/${id}?view=mTransactions2&scoringPeriodId=${w}`, creds, { "x-fantasy-filter": TX_FILTER });
+          const r = await C().espnGet(`${base}?view=mTransactions2&scoringPeriodId=${w}`, creds, { "x-fantasy-filter": TX_FILTER });
           return r?.transactions || [];
         } catch (e) { if (e instanceof C().PrivateError) throw e; return []; }
       });
-      const seenId = new Set(), seenTrade = new Set();
-      lists.forEach((list, i) => {
-        for (const t of list) {
-          if (t.status !== "EXECUTED" || (t.id && seenId.has(t.id))) continue;
-          if (t.id) seenId.add(t.id);
-          const items = t.items || [];
-          const w = Number(t.scoringPeriodId ?? periods[i]); const at = t.processDate || t.proposedDate || null;
-          if (/^TRADE/.test(t.type || "")) {
-            const tr = items.filter((x) => x.type === "TRADE");
-            if (!tr.length) continue;
-            // a trade shows up as the proposal, the accept and the league's OK: keep it once
-            const sig = tr.map((x) => `${x.playerId}:${x.fromTeamId}>${x.toTeamId}`).sort().join(",");
-            if (seenTrade.has(sig)) continue;
-            seenTrade.add(sig);
-            const sides = {};
-            const side = (tid) => (sides[tid] ||= { k: keyOf[tid] || null, get: [], picks: [], faab: 0 });
-            for (const x of tr) { side(x.fromTeamId); side(x.toTeamId).get.push(String(x.playerId)); }
-            tx.push({ t: "trade", w, at, sides: Object.values(sides).filter((s) => s.k) });
-          } else if (t.type === "WAIVER" || t.type === "FREEAGENT") {
-            const add = items.filter((x) => x.type === "ADD"), drop = items.filter((x) => x.type === "DROP");
-            if (!add.length && !drop.length) continue;
-            const team = t.teamId ?? add[0]?.toTeamId ?? drop[0]?.fromTeamId;
-            tx.push({
-              t: t.type === "WAIVER" ? "waiver" : "fa", w, at, k: keyOf[team] || null,
-              add: add.map((x) => String(x.playerId)), drop: drop.map((x) => String(x.playerId)),
-              ...(faab && t.type === "WAIVER" && t.bidAmount != null ? { bid: t.bidAmount } : {}),
-            });
-          }
+      const all = [], seenId = new Set();
+      lists.forEach((list, i) => { for (const t of list) { if (t.id && seenId.has(t.id)) continue; if (t.id) seenId.add(t.id); all.push({ ...t, _w: Number(t.scoringPeriodId ?? periods[i]) }); } });
+
+      // Waivers and free agents
+      const addsOf = [];   // [week, player, toTeam] for every completed add (to tell pickups apart from trades)
+      for (const t of all) {
+        if ((t.type !== "WAIVER" && t.type !== "FREEAGENT") || t.status !== "EXECUTED") continue;
+        const items = t.items || [], w = t._w, at = t.processDate || t.proposedDate || null;
+        const add = items.filter((x) => x.type === "ADD"), drop = items.filter((x) => x.type === "DROP");
+        add.forEach((x) => addsOf.push([w, String(x.playerId), x.toTeamId]));
+        if (!add.length && !drop.length) continue;
+        const team = t.teamId ?? add[0]?.toTeamId ?? drop[0]?.fromTeamId;
+        tx.push({
+          t: t.type === "WAIVER" ? "waiver" : "fa", w, at, k: keyOf[team] || null,
+          add: add.map((x) => String(x.playerId)), drop: drop.map((x) => String(x.playerId)),
+          ...(faab && t.type === "WAIVER" && t.bidAmount != null ? { bid: t.bidAmount } : {}),
+        });
+      }
+
+      // Trades. ESPN keeps a trade's player list only on its proposal, and for past seasons it usually stops
+      // returning accepted proposals: only the accept/approval records remain (who, which week, no players).
+      // So: use the proposal's players when ESPN still has them, and rebuild the rest from week-to-week rosters.
+      // vetoVotes: trades at least one manager voted to veto (a vote, not the outcome: many still went through)
+      const props = {}, vetoVotes = new Set(), done = {};   // done: proposal id -> { w, at, teams }
+      for (const t of all) {
+        if (t.type === "TRADE_PROPOSAL") props[t.id] = t;
+        if (t.type === "TRADE_VETO" && t.relatedTransactionId) vetoVotes.add(t.relatedTransactionId);
+      }
+      const mark = (pid, t) => {
+        const e = (done[pid] ||= { w: t._w, at: t.processDate || t.proposedDate || null, teams: new Set() });
+        if (t._w < e.w) e.w = t._w;
+        if (t.type === "TRADE_ACCEPT" && t.teamId != null) e.teams.add(t.teamId);
+      };
+      for (const t of all) {
+        if (t.type === "TRADE_PROPOSAL" && t.status === "EXECUTED") mark(t.id, t);
+        else if ((t.type === "TRADE_ACCEPT" && t.status !== "CANCELED") || (t.type === "TRADE_UPHOLD" && t.status === "EXECUTED")) {
+          if (t.relatedTransactionId) mark(t.relatedTransactionId, t);
+          else if ((t.items || []).some((x) => x.type === "TRADE")) { props[t.id] ||= t; mark(t.id, t); }
         }
-      });
+      }
+      const tradeTx = (w, at, moves) => {   // moves: [[player, fromTeam, toTeam]]
+        const sides = {};
+        const side = (tid) => (sides[tid] ||= { k: keyOf[tid] || null, get: [], picks: [], faab: 0 });
+        for (const [p, f, to] of moves) { side(f); side(to).get.push(String(p)); }
+        return { t: "trade", w, at, sides: Object.values(sides).filter((s) => s.k) };
+      };
+      const covered = new Set();   // "player@from>to" already in a trade
+      const pending = [];
+      for (const [pid, e] of Object.entries(done)) {
+        const items = (props[pid]?.items || []).filter((x) => x.type === "TRADE");
+        // trust the player list unless the trade drew veto votes and never showed as done: then the rosters decide
+        if (items.length && !(vetoVotes.has(pid) && props[pid]?.status !== "EXECUTED")) {
+          const mv = items.map((x) => [String(x.playerId), x.fromTeamId, x.toTeamId]);
+          const sig = mv.map((m) => `${m[0]}@${m[1]}>${m[2]}`);
+          if (sig.every((x) => covered.has(x))) continue;
+          sig.forEach((x) => covered.add(x));
+          tx.push(tradeTx(e.w, e.at, mv));
+        } else pending.push(e);
+      }
+
+      if (pending.length) {
+        // rosters: week 0 = the draft, then each week's roster
+        const ros = [Object.fromEntries((d.draftDetail?.picks || []).filter((p) => p.playerId > 0).map((p) => [String(p.playerId), p.teamId]))];
+        const weekly = await pool(Array.from({ length: last }, (_, i) => i + 1), 6, async (w) => {
+          try {
+            const r = await C().espnGet(`${base}?view=mRoster&scoringPeriodId=${w}`, creds);
+            const m = {}; for (const t of r?.teams || []) for (const e of t.roster?.entries || []) m[String(e.playerId)] = t.id;
+            return m;
+          } catch (err) { if (err instanceof C().PrivateError) throw err; return null; }
+        });
+        weekly.forEach((m, i) => { ros[i + 1] = m; });
+        // players who went straight from one team to another between weeks a and b, not through waivers/free agency
+        const moved = (a, b) => {
+          const r0 = ros[a], r1 = ros[b];
+          if (!r0 || !r1 || a === b) return [];
+          const viaAdd = new Set(addsOf.filter(([w]) => w >= a && w <= b).map(([, p, to]) => `${p}>${to}`));
+          return Object.keys(r1).filter((p) => r0[p] != null && r0[p] !== r1[p] && !viaAdd.has(`${p}>${r1[p]}`) && !covered.has(`${p}@${r0[p]}>${r1[p]}`)).map((p) => [p, r0[p], r1[p]]);
+        };
+        // the two teams that swapped players (both directions), preferring the team that accepted
+        const bestPair = (mv, teams) => {
+          const pairs = {};
+          for (const m of mv) if (!teams.size || teams.has(m[1]) || teams.has(m[2])) (pairs[[m[1], m[2]].sort((x, y) => x - y).join("-")] ||= []).push(m);
+          return Object.values(pairs).filter((ms) => ms.some((m) => m[1] === ms[0][1]) && ms.some((m) => m[1] === ms[0][2])).sort((x, y) => y.length - x.length)[0] || null;
+        };
+        pending.sort((a, b) => (a.at || 0) - (b.at || 0) || a.w - b.w);
+        for (const e of pending) {
+          let got = null;
+          for (const [a, b] of [[e.w - 1, e.w], [e.w, e.w + 1], [e.w - 1, e.w + 1]]) {
+            got = bestPair(moved(Math.max(0, a), Math.min(last, b)), e.teams);
+            if (got) break;
+          }
+          if (!got) continue;
+          got.forEach((m) => covered.add(`${m[0]}@${m[1]}>${m[2]}`));
+          tx.push(tradeTx(e.w, e.at, got));
+        }
+      }
       tx.sort((a, b) => (a.at || 0) - (b.at || 0) || a.w - b.w);
     }
 
@@ -313,7 +381,8 @@
   /* ======================= filling seasons ======================= */
   const FIELDS = ["draft", "rost", "tx", "tc", "pl", "faab", "mv"];
   const strip = (s) => { const o = { ...s }; for (const f of FIELDS) delete o[f]; delete o.mvErr; return o; };
-  const needsMoves = (s) => s.mv == null;
+  // never fetched, or an ESPN season (2018+) saved before trades were rebuilt (MOVES_V 2)
+  const needsMoves = (s) => s.mv == null || (s.platform === "espn" && s.year >= 2018 && s.mv >= 1 && s.mv < MOVES_V);
   // a season saved with players we couldn't name (tried at most twice more)
   const needsNames = (s) => s.mv >= 1 && (s.nmFix || 0) < 2 && unnamed(s.pl).length > 0;
   const pendingCount = (seasons) => seasons.filter((s) => needsMoves(s) || needsNames(s)).length;
@@ -357,6 +426,8 @@
       } catch (e) {
         if (e?.private) throw e;
         console.error("moves", rec.extId, s.year, e?.message);
+        // an upgrade that fails keeps what the season already had
+        if (s.mv >= 1) return { ...s, mv: MOVES_V };
         const tries = (s.mvErr || 0) + 1;
         return tries >= 2 ? { ...strip(s), mv: -1 } : { ...strip(s), mvErr: tries };
       }

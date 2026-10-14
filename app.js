@@ -1138,7 +1138,7 @@
           if (t.bid != null) { c.faab += t.bid; if (!c.bigBid || t.bid > c.bigBid.t.bid) c.bigBid = { s, t }; }
         }
       }
-      // ESPN before 2019: only season totals
+      // ESPN before 2018: only season totals
       if (!detail && s.tc) for (const [raw, [a, d, tr, spent]] of Object.entries(s.tc)) {
         const c = C(ck(raw)); c.adds += a; c.drops += d; c.trades += tr; c.faab += spent || 0; c.est = true;
       }
@@ -1181,7 +1181,7 @@
     const journeymen = Object.values(added).filter((a) => a.n >= 2).sort((a, b) => b.n - a.n || b.by.size - a.by.size).slice(0, 8);
     const bids = pickups.filter((x) => x.t.bid).sort((a, b) => b.t.bid - a.t.bid).slice(0, 8);
     const partner = (c) => { const e = Object.entries(c.partners).sort((a, b) => b[1] - a[1])[0]; return e ? `${esc(name(e[0]))} <span class="avg">(${e[1]})</span>` : `<span class="muted">—</span>`; };
-    const espnEarly = S.league.platform === "espn" && S.league.seasons.some((s) => s.year < 2019);
+    const espnEarly = S.league.platform === "espn" && S.league.seasons.some((s) => s.year < 2018);
 
     return `${movesNote()}
       <div class="chips" role="group" aria-label="Seasons"><button class="chip" aria-pressed="${S.mvYear === "all"}" data-act="mvYear" data-y="all">All seasons</button>${yrs.map((y) => `<button class="chip" aria-pressed="${S.mvYear === y}" data-act="mvYear" data-y="${y}">${y}</button>`).join("")}</div>
@@ -1198,7 +1198,7 @@
         <td class="num">${c.trades}</td><td class="num">${c.adds}</td><td class="num">${c.drops}</td><td class="num">${c.waivers}</td>
         ${anyFaab ? `<td class="num">$${c.faab}</td><td class="l">${c.bigBid ? `$${c.bigBid.t.bid} · ${esc(pinfo(c.bigBid.s, c.bigBid.t.add[0])[0])} <span class="avg">(${c.bigBid.s.year})</span>` : `<span class="muted">—</span>`}</td>` : ""}
         <td class="l">${partner(c)}</td></tr>`).join("")}</tbody></table></div>
-      <p class="sub" style="margin-top:8px">Tap a manager to see only their moves.${anyEst ? " * Includes ESPN's season totals for years before 2019, when ESPN didn't keep move-by-move history." : ""}${espnEarly && !anyEst ? " ESPN only keeps move-by-move history from 2019 on." : ""}</p>`}
+      <p class="sub" style="margin-top:8px">Tap a manager to see only their moves.${anyEst ? " * Includes ESPN's season totals for years before 2018, when ESPN didn't keep move-by-move history." : ""}${espnEarly && !anyEst ? " ESPN only keeps move-by-move history from 2018 on." : ""}</p>`}
       ${!S.mvMgr && topPairs.length ? `<h2>Most frequent trade partners</h2><div class="cards">${topPairs.map((p) => card(`${p.n} trade${p.n === 1 ? "" : "s"}`, `${esc(name(p.a))} &amp; ${esc(name(p.b))}`, "")).join("")}</div>` : ""}
       <h2>Trades${S.mvMgr ? ` · ${esc(name(S.mvMgr))}` : ""}</h2>
       ${tr.length ? `<div class="tgrid">${(S.trAll ? tr : tr.slice(0, 12)).map(tradeCard).join("")}</div>${tr.length > 12 && !S.trAll ? `<div class="actions"><button class="btn ghost small" data-act="trAll">Show all ${tr.length} trades</button></div>` : ""}` : `<p class="sub">No trades${S.mvMgr ? " for this manager" : ""} in ${S.mvYear === "all" ? "these seasons" : S.mvYear}.</p>`}
@@ -1305,7 +1305,7 @@
       </div>
       ${trades.length ? `<h3 class="round">Trades</h3><div class="tgrid">${trades.map(tradeCard).join("")}</div>` : ""}
       ${pickups.length ? `<h3 class="round">Waiver and free-agent pickups (${pickups.length})</h3><div class="scroll"><table><thead><tr><th class="l">When</th><th class="l">Added</th><th class="l">Dropped</th><th class="l">How</th></tr></thead><tbody>${[...pickups].reverse().map((t) => `<tr><td class="l">${t.w ? "Week " + t.w : "Preseason"}<span class="tn">${shortDate(t.at)}</span></td><td class="l">${t.add.map((p) => pchip(src, p)).join("<br>") || "—"}</td><td class="l muted">${t.drop.map((p) => esc(pinfo(src, p)[0])).join("<br>") || "—"}</td><td class="l">${t.t === "waiver" ? `Waivers${t.bid != null ? ` <b>$${t.bid}</b>` : ""}` : "Free agent"}</td></tr>`).join("")}</tbody></table></div>` : ""}
-      ${!src.tx?.length && src.mv === 1 && S.league.platform === "espn" && year < 2019 ? `<p class="sub">ESPN only keeps trades and pickups from 2019 on.</p>` : ""}`;
+      ${!src.tx?.length && src.mv >= 1 && S.league.platform === "espn" && year < 2018 ? `<p class="sub">ESPN only keeps trades and pickups from 2018 on.</p>` : ""}`;
   }
 
   /* ----- team page summary ----- */

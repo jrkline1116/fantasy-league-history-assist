@@ -207,7 +207,8 @@ Deno.serve(async (req) => {
         const seasons = now.data.seasons.map((s: any) => {
           const f = filled[s.year];
           // fill seasons without moves yet, or repaired player names on a season nobody else changed meanwhile
-          if (!f || (s.mv != null && !(f.nmFix > (s.nmFix || 0)))) return s;
+          // or seasons upgraded to a newer moves version (f.mv above what's saved)
+          if (!f || (s.mv != null && !(f.mv > s.mv) && !(f.nmFix > (s.nmFix || 0)))) return s;
           const { mvErr: _e, ...base } = s;
           return { ...base, ...Object.fromEntries(MOVE_FIELDS.filter((k) => f[k] !== undefined).map((k) => [k, f[k]])) };
         });

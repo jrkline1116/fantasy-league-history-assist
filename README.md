@@ -26,7 +26,7 @@ Website: https://fantasyleaguehistoryassist.com/ (once the domain is pointed her
 - **Rosters** tab: every team's final roster for a season (or current rosters for the season in progress), in order of finish, starters first, with how each player got there (drafted, keeper, trade, waivers, free agent). Pick a team for its roster, draft, trades and pickups that season.
 - Manager names all over the site (Trophy room, Record Book, Seasons standings and matchups, Teams page years, the finish strip, drafts, trades, pickups) open that team's roster for that season. Jumps like this show a **Back** button that returns to exactly where you were (the phone back gesture works too).
 - **Teams** page: trades, pickups, latest trade and first-round picks for that manager.
-- Sleeper has all of it for every season. ESPN has drafts and final rosters for every season, but move-by-move trades and pickups only from 2019 on; before that the counts use ESPN's season totals (marked with *).
+- Sleeper has all of it for every season. ESPN has drafts and final rosters for every season, but move-by-move trades and pickups only from 2018 on (trades whose player lists ESPN no longer keeps are rebuilt from weekly rosters); before that the counts use ESPN's season totals (marked with *).
 - Leagues saved before this get their older seasons filled in a few at a time the first time someone opens the link (the page loads them automatically). Private ESPN leagues fill in the next time a member taps **Update this season** with their login.
 - Player names come from Sleeper's player list (also used to name ESPN players), kept in the `flha_cache` table and refreshed once a day.
 
