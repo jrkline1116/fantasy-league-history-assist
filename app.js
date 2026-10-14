@@ -557,11 +557,11 @@
       <textarea id="smackMsg" rows="5" class="sharemsg">${esc(body)}</textarea>
       <div class="actions" style="margin-top:8px"><button class="btn ghost small" data-act="smackNext">🎲 Another line</button>${sm.flip ? `<button class="btn ghost small" data-act="smackFlip">⇄ Send it to ${esc(name(sm.flip.b))} instead</button>` : ""}</div>
       <div class="sharebtns">
-        <a class="btn" id="smackSms" href="#">Text</a>
+        ${navigator.share ? `<button class="btn" data-act="smackShare">Share…</button>` : ""}
+        <button class="btn ${navigator.share ? "ghost" : ""}" data-act="smackCopy">Copy message</button>
         <a class="btn ghost" id="smackMail" href="#">Email</a>
-        ${navigator.share ? `<button class="btn ghost" data-act="smackShare">Share…</button>` : ""}
+        <a class="btn ghost" id="smackSms" href="#">Text</a>
         <button class="btn ghost" data-act="messenger" data-src="smack">Messenger</button>
-        <button class="btn ghost" data-act="smackCopy">Copy</button>
       </div>
       ${to ? `<details class="howto" ${c.phone || c.email ? "" : ""}><summary>${c.phone || c.email ? `Sending to ${esc([c.phone, c.email].filter(Boolean).join(" · "))}` : `Save ${esc(first(to))}'s number or email (this device only)`}</summary>
         <label class="f" for="smackPhone">Phone</label><input type="text" id="smackPhone" inputmode="tel" autocomplete="off" value="${esc(c.phone || "")}" placeholder="480-555-0123">
