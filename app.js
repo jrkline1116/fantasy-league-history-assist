@@ -434,6 +434,11 @@
     const subject = `${S.league.leagueName} · league history`;
     return { url, text, subject, msg: `${text}\n\n${url}` };
   }
+  // Some share targets (Discord, X, Facebook…) keep only the link and drop the message text.
+  // Copy the whole message first so it can be pasted there.
+  async function copyForShare(msg) {
+    try { await navigator.clipboard.writeText(msg); toast("Message copied too. If the app shows only the link, paste the message."); } catch { /* clipboard blocked: share still works */ }
+  }
   function shareDlg() {
     const { url, subject } = shareParts(), text = shareDefault(), msg = `${text}\n\n${url}`;
     const enc = encodeURIComponent;
@@ -1478,6 +1483,7 @@
           // Sharing text alone hides the link-sharing apps.
           const msg = $("smackMsg").value, url = (msg.match(/https?:\/\/\S+/g) || []).pop() || shareUrl(S.league);
           const text = msg.replace(url, "").trim();
+          await copyForShare(msg);
           try { await navigator.share({ title: `${S.league.leagueName}: the record book has something to say`, text, url }); }
           catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy instead."); }
           return;
@@ -1503,7 +1509,8 @@
         }
         case "smackCopy": { try { await navigator.clipboard.writeText($("smackMsg").value); toast("Copied. Paste it wherever it hurts most."); } catch { $("smackMsg").select(); toast("Copy it from the box."); } return; }
         case "shareNative": {
-          const { subject, text, url } = shareParts();
+          const { subject, text, url, msg } = shareParts();
+          await copyForShare(msg);
           try { await navigator.share({ title: subject, text, url }); } catch (err) { if (err?.name !== "AbortError") toast("Couldn't open sharing. Use Copy message instead."); }
           return;
         }
